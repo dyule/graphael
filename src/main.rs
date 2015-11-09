@@ -1,19 +1,26 @@
 extern crate rustc_serialize;
 extern crate graphael;
 use std::io::{self, BufRead, Write};
-use graphael::Graph;
+use graphael::{Graph, PropVal};
 
 
 
 // Shorthand HashMap
-// dict!({"yes": "1", "no": "0"}) => vec!($(($key, $value)),*).move_iter().collect();
-// macro_rules! dict (
-// 	({$($key:expr : $value:expr),*}) => (vec!($(($key, $value)),*).move_iter().collect())
-// );
+// dict!{"yes" => "1", "no" => "0"}
+macro_rules! dict (
+	{ $($key:expr => $value:expr),+ } => {
+        {
+            let mut dict = ::std::collections::HashMap::new();
+            $(
+                dict.insert($key, $value);
+            )+
+            dict
+        }
+     };
+);
 
 fn main() {
 	println!("Graphael 0.1");
-
 	print!("Enter a graph name> ");
 	io::stdout().flush().unwrap();
 
@@ -40,8 +47,9 @@ fn main() {
 	println!("1. Nodes with attribute.");
 	println!("2. Nodes with key-value.");
 	println!("3. Edges with label.");
-	println!("4. Edges from node with label.");
-	println!("5. Look up node.");
+	println!("4. Edges from node.");
+	println!("5. Edges from node with label.");
+	println!("6. Look up node.");
 	println!("");
 	print!(">>> ");
 	io::stdout().flush().unwrap();
@@ -59,6 +67,7 @@ fn main() {
 						Ok(3) => current_state = 3,
 						Ok(4) => current_state = 4,
 						Ok(5) => current_state = 5,
+						Ok(6) => current_state = 6,
 						_ => current_state = 0
 					},
 					1 => { // Nodes with attribute
@@ -67,19 +76,24 @@ fn main() {
 					},
 					2 => { // Node by key-value pair
 						let kv : Vec<&str> = s.trim().split('=').map(|x| x.trim()).collect();
-						println!("{:?}", graph.nodes_with_prop(&kv[0].to_string(), &kv[1].to_string()));
+						println!("{:?}", graph.nodes_with_prop(&kv[0].to_string(), &PropVal::String(kv[1].to_string())));
 						current_state = 0
 					},
 					3 => { // Edges with label
 						println!("{:?}", graph.edges_with_label(&s.trim().to_string()));
 						current_state = 0
 					},
-					4 => { // Edges from node (NodeIndex) with label
+					4 => { //Edges from node
+						let nodeid = (s.trim().parse::<usize>()).unwrap();
+						println!("{:?}", graph.edges_from(nodeid));
+						current_state = 0
+					},
+					5 => { // Edges from node (NodeIndex) with label
 						let node_label : Vec<&str> = s.trim().split("HAS").map(|x| x.trim()).collect();
 						println!("{:?}", graph.edges_with_label_from((node_label[0].to_owned().parse::<usize>()).unwrap(), node_label[1]));
 						current_state = 0
 					},
-					5 => { // Look up node by id (NodeIndex)
+					6 => { // Look up node by id (NodeIndex)
 						let nodeid = (s.trim().parse::<usize>()).unwrap();
 						println!("{:?}", graph.get_node(nodeid));
 						current_state = 0
@@ -95,15 +109,17 @@ fn main() {
 			1 => print!("Enter attribute> "),
 			2 => print!("Enter key-value> "),
 			3 => print!("Enter label> "),
-			4 => print!("Enter node and label> "),
-			5 => print!("Enter node id> "),
+			4 => print!("Enter node>"),
+			5 => print!("Enter node and label> "),
+			6 => print!("Enter node id> "),
 			_ => {
 				println!("");
 				println!("1. Nodes with attribute.");
 				println!("2. Nodes with key-value.");
 				println!("3. Edges with label.");
-				println!("4. Edges from node with label.");
-				println!("5. Look up node by id.");
+				println!("4. Edges from node.");
+				println!("5. Edges from node with label.");
+				println!("6. Look up node by id.");
 				println!("");
 				print!(">>> ")
 			}
