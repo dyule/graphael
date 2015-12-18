@@ -5,6 +5,7 @@ use graphael::{Graph, PropVal};
 
 
 
+
 // Shorthand HashMap
 // dict!{"yes" => "1", "no" => "0"}
 macro_rules! dict (
@@ -76,7 +77,7 @@ fn main() {
 					},
 					2 => { // Node by key-value pair
 						let kv : Vec<&str> = s.trim().split('=').map(|x| x.trim()).collect();
-						println!("{:?}", graph.nodes_with_prop(&kv[0].to_string(), &PropVal::String(kv[1].to_string())));
+						println!("{:?}", graph.nodes_with_prop(&kv[0].to_string(), &PropVal::String(kv[1].to_string().into_boxed_str())));
 						current_state = 0
 					},
 					3 => { // Edges with label

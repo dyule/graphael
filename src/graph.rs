@@ -12,28 +12,28 @@ use std::string::ToString;
 /*** Struct definitions ***/
 /**************************/
 
-#[derive(RustcDecodable, PartialEq, Debug)]
+#[derive(PartialEq, Debug)]
 pub struct Node {
     pub id: NodeIndex,
-    pub props:HashMap<String, PropVal>,
+    pub props:HashMap<Box<str>, PropVal>,
 }
 
-#[derive(RustcDecodable, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct Edge {
-	pub labels: HashSet<String>
+	pub labels: HashSet<Box<str>>
 }
 
 #[derive(Debug, Clone)]
-pub struct Path {
+pub struct Path<'a> {
 	pub nodes: Vec<NodeIndex>,
-	pub edges: Vec<String>
+	pub edges: Vec<&'a str>
 
 }
 
-#[derive(Debug, PartialEq, RustcDecodable)]
+#[derive(Debug, PartialEq)]
 pub enum PropVal {
 	Int(i64),
-	String(String)
+	String(Box<str>)
 }
 
 #[derive (Debug)]
@@ -50,7 +50,7 @@ pub type NodeIndex = usize;
 /*** Implementations ***/
 /***********************/
 
-impl PartialEq for Graph {
+impl  PartialEq for Graph {
     fn eq(&self, other:&Self) -> bool {
         return self.nodes.eq(&other.nodes) && self.edges.eq(&other.edges)
     }
@@ -72,7 +72,7 @@ impl ToJson for Node {
 		let mut props = BTreeMap::new();
 		d.insert("id".to_string(), self.id.to_json());
 		for (k, v) in self.props.iter() {
-			props.insert(k.clone(), v.to_json());
+			props.insert(k.to_string(), v.to_json());
 		}
 		d.insert("props".to_string(), Json::Object(props));
 		Json::Object(d)
@@ -87,7 +87,7 @@ impl ToJson for Edge {
 	}
 }
 
-impl ToJson for Graph {
+impl <'a> ToJson for Graph {
 	fn to_json(&self) -> Json {
 		let mut d = BTreeMap::new();
 		let mut edge_json_map = BTreeMap::new();
@@ -99,6 +99,75 @@ impl ToJson for Graph {
 		Json::Object(d)
     }
 }
+
+impl Decodable for PropVal {
+    fn decode<D:Decoder>(decoder: &mut D) -> Result<Self, D::Error> {
+        decoder.read_struct("root", 0, |decoder| {
+            let t = try!(decoder.read_struct_field("type", 0, |decoder| {
+                decoder.read_usize()
+            }));
+            decoder.read_struct_field("value", 0, |decoder| {
+                match t {
+                    0 => match decoder.read_i64() {
+                        Ok(val) => Ok(PropVal::Int(val)),
+                        Err(e) => Err(e)
+                    },
+                    1 => match decoder.read_str() {
+                        Ok(val) => Ok(PropVal::String(val.into_boxed_str())),
+                        Err(e) => Err(e)
+                    },
+                    _ => Err(decoder.error("Unexpected property value type"))
+                }
+            })
+        })
+    }
+}
+
+impl Decodable for Node {
+    fn decode<D:Decoder>(decoder: &mut D) -> Result<Self, D::Error> {
+        decoder.read_struct("root", 0, |decoder| {
+            let id = try!(decoder.read_struct_field("id", 0, |decoder| {
+                decoder.read_usize()
+            }));
+            let props = try!(decoder.read_struct_field("props", 0, |decoder| {
+                decoder.read_map(|decoder, len| {
+                    let mut props:HashMap<Box<str>, PropVal> = HashMap::new();
+                    for idx in 0..len {
+                        let prop_key:String = try!(decoder.read_map_elt_key(idx, |decoder| decoder.read_str()));
+                        let value:PropVal = try!(decoder.read_map_elt_val(idx, |decoder| PropVal::decode(decoder)));
+                        props.insert(prop_key.into_boxed_str(), value);
+                    }
+                    Ok(props)
+                })
+            }));
+            Ok(Node{
+                id: id,
+                props: props
+            })
+        })
+    }
+}
+
+impl Decodable for Edge {
+    fn decode<D:Decoder>(decoder: &mut D) -> Result<Self, D::Error> {
+        decoder.read_struct("root", 0, |decoder| {
+            let labels = try!(decoder.read_struct_field("labels", 0, |decoder| {
+                decoder.read_seq(|decoder, len| {
+                    let mut labels:HashSet<Box<str>> = HashSet::new();
+                    for idx in 0..len {
+                        let label:String = try!(decoder.read_seq_elt(idx, |decoder| decoder.read_str()));
+                        labels.insert(label.into_boxed_str());
+                    }
+                    Ok(labels)
+                })
+            }));
+            Ok(Edge{
+                labels: labels
+            })
+        })
+    }
+}
+
 impl Decodable for Graph {
 
     fn decode<D:Decoder>(decoder: &mut D) -> Result<Self, D::Error> {
@@ -132,7 +201,7 @@ impl Decodable for Graph {
                         let edge_map:HashMap<NodeIndex, Edge> = try!(decoder.read_map_elt_val(idx, |decoder| Decodable::decode(decoder)));
                         for (destination_index, edge) in edge_map.iter() {
 							for label in edge.labels.iter() {
-                            	g.connect_nodes(source_index, *destination_index, &*label)
+                            	g.connect_nodes(source_index, *destination_index, label)
 							}
                         };
                     }
@@ -209,7 +278,7 @@ impl Graph {
     }
 
 	/// Adds a Node to the Graph with the specified properties
-	pub fn add_node_with_props(&mut self, props: HashMap<String, PropVal>) -> NodeIndex {
+	pub fn add_node_with_props(&mut self, props: HashMap<Box<str>, PropVal>) -> NodeIndex {
 		let id = self.add_node();
 		if let Some(node) = self.get_node_mut(id) {
 			node.props = props;
@@ -246,7 +315,7 @@ impl Graph {
     }
 
 	/// Get Nodes with a given attribute
-    pub fn nodes_with_attr(&self, attr: &String) -> Vec<&Node> {
+    pub fn nodes_with_attr(&self, attr: &str) -> Vec<&Node> {
 		self.nodes.values().filter(|node|
 			if let Some(e) = self.edges.get(&node.id) {
 				if let Some(edge) = e.get(&node.id) {
@@ -261,7 +330,7 @@ impl Graph {
     }
 
     /// Get Nodes with a key-value pair
-    pub fn nodes_with_prop(&self, key: &String, value: &PropVal) -> Vec<NodeIndex> {
+    pub fn nodes_with_prop(&self, key: &str, value: &PropVal) -> Vec<NodeIndex> {
         self.nodes.values().filter(|node|
             node.props.iter().find(|&(k, v)| **k == *key && *v == *value ).is_some())
 			.map(|node|
@@ -282,15 +351,14 @@ impl Graph {
         if !self.nodes.contains_key(&destination) {
             panic!("Tried to connect node id that wasn't in the database: {}", destination)
         }
-		let lbl = label.to_string();
 		let src_map = self.edges.entry(origin).or_insert(HashMap::new());
 		match src_map.entry(destination) {
 			Entry::Vacant(e) => {
 				let mut s = HashSet::new();
-				s.insert(lbl);
+				s.insert(label.to_string().into_boxed_str());
 				e.insert(Edge { labels: s });
 			},
-			Entry::Occupied(mut e) => if !e.get().labels.contains(&lbl) { e.get_mut().labels.insert(lbl); } else {()}
+			Entry::Occupied(mut e) => if !e.get().labels.contains(label) { e.get_mut().labels.insert(label.to_string().into_boxed_str()); } else {()}
 		};
 
         if match self.reverse_edges.get_mut(&origin){
@@ -321,15 +389,14 @@ impl Graph {
         if !self.nodes.contains_key(&destination) {
             panic!("Tried to disconnect node id that wasn't in the database: {}", destination)
         }
-		let label = label.to_string();
 		match self.edges.entry(origin) {
 			Entry::Vacant(_) => panic!("Tried to disconnect nodes that were not connected: {}, {}", origin, destination),
 			Entry::Occupied(mut map) => {
 				match map.get_mut().entry(destination) {
 					Entry::Vacant(_) => panic!("Tried to disconnect nodes that were not connected: {}, {}", origin, destination),
 					Entry::Occupied(mut edge) => {
-						if edge.get().labels.contains(&label) {
-							edge.get_mut().labels.remove(&label);
+						if edge.get().labels.contains(label) {
+							edge.get_mut().labels.remove(label);
 							if edge.get().labels.is_empty() {
 								edge.remove();
 								match self.reverse_edges.entry(origin) {
@@ -377,7 +444,7 @@ impl Graph {
 	}
 
     /// Get Edges with a given label
-	pub fn edges_with_label(&self, label: &String) -> HashMap<&NodeIndex, HashMap<&NodeIndex, &Edge>> {
+	pub fn edges_with_label(&self, label: &str) -> HashMap<&NodeIndex, HashMap<&NodeIndex, &Edge>> {
 		let mut edges = HashMap::<&NodeIndex, HashMap<&NodeIndex, &Edge>>::new();
 		for (src, map) in self.edges.iter() {
 			let filtered: HashMap<&NodeIndex, &Edge> = map.iter().filter(|&(_idx, edge)| edge.labels.contains(label)).collect();
@@ -390,11 +457,10 @@ impl Graph {
 
 	/// Get Nodes with a given label from a source NodeIndex
 	pub fn edges_with_label_from(&self, source: NodeIndex, label: &str) -> Vec<NodeIndex> {
-		let lbl = label.to_string();
 		if let Some(edge) = self.edges.get(&source) {
 		edge.iter().filter_map(
 			|(&idx, edge)|{
-				if edge.labels.contains(&lbl) {
+				if edge.labels.contains(label) {
 					Some(idx)
 				} else {
 					None
@@ -419,25 +485,19 @@ impl Graph {
 			closed_set.insert(*cur_node);
 			if let Some(e) = self.edges.get(&cur_node) {
 				for (child, edge) in e.iter() {
-					let mut label_match = false;
-					let mut matching_label = "".to_string();
 					for label in &edge.labels {
 						if edge_predicate(&label) {
-							label_match = true;
-							matching_label = label.clone();
-							break
-						}
-					}
-					if label_match {
-						let mut child_path = cur.clone();
-						child_path.edges.push(matching_label);
-						child_path.nodes.push(*child);
-						if end_predicate(*child) {
-							return Some(child_path);
-						} else {
-							if !closed_set.contains(child) {
-								open_set.push_back(child_path);
-							}
+                            let mut child_path = cur.clone();
+    						child_path.edges.push(label);
+    						child_path.nodes.push(*child);
+    						if end_predicate(*child) {
+    							return Some(child_path);
+    						} else {
+    							if !closed_set.contains(child) {
+    								open_set.push_back(child_path);
+    							}
+    						}
+                            break;
 						}
 					}
 				}
@@ -452,7 +512,18 @@ impl Graph {
 mod tests {
     use super::*;
     use rustc_serialize::json::{Json, ToJson};
-	use std::collections::HashMap;
+
+    macro_rules! prop_map (
+    	{ $($key:expr => $value:expr),+ } => {
+            {
+                let mut dict = ::std::collections::HashMap::new();
+                $(
+                    dict.insert($key.to_string().into_boxed_str(),  PropVal::String($value.to_string().into_boxed_str()));
+                )+
+                dict
+            }
+         };
+    );
     #[test]
     fn adding_nodes() {
         let mut g = Graph::new();
@@ -465,7 +536,7 @@ mod tests {
         {
             let n2 = g.get_node_mut(id2).unwrap();
             assert!(n2.id == id2);
-            n2.props.insert("hey".to_string(), PropVal::String("you".to_string()));
+            n2.props.insert("hey".to_string().into_boxed_str(), PropVal::String("you".to_string().into_boxed_str()));
         }
 
     }
@@ -537,23 +608,25 @@ mod tests {
 	#[test]
 	fn node_properties() {
 		let mut g = Graph::new();
-		let mut props_hash_map1 = HashMap::new();
-		props_hash_map1.insert("prop1".to_string(), PropVal::String("val1".to_string()));
-		props_hash_map1.insert("prop2".to_string(), PropVal::String("val2".to_string()));
-		props_hash_map1.insert("prop3".to_string(), PropVal::String("val3".to_string()));
+		let props_hash_map1 = prop_map! {
+            "prop1" => "val1",
+            "prop2" => "val2",
+            "prop3" => "val3"
+        };
 
-		let mut props_hash_map2 = HashMap::new();
-		props_hash_map2.insert("prop2".to_string(), PropVal::String("val2".to_string()));
-		props_hash_map2.insert("prop3".to_string(), PropVal::String("val3".to_string()));
+        let props_hash_map2 = prop_map! {
+            "prop2" => "val2",
+            "prop3" => "val3"
+        };
 		let id1 = g.add_node_with_props(props_hash_map1);
 		let id2 = g.add_node_with_props(props_hash_map2);
 
-		let props_list = g.nodes_with_prop(&"prop2".to_string(), &PropVal::String("val2".to_string()));
+		let props_list = g.nodes_with_prop("prop2", &PropVal::String("val2".to_string().into_boxed_str()));
 		assert!(props_list.len() == 2);
 		assert!(props_list.contains(&id1));
 		assert!(props_list.contains(&id2));
 
-		let props_list2 = g.nodes_with_prop(&"prop1".to_string(), &PropVal::String("val1".to_string()));
+		let props_list2 = g.nodes_with_prop("prop1", &PropVal::String("val1".to_string().into_boxed_str()));
 		assert!(props_list2.len() == 1);
 		assert!(props_list2.contains(&id1));
 	}
