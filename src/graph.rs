@@ -1,3 +1,4 @@
+//! Graphael is a lightweight graph database suitable for embedding in other applications.
 extern crate rustc_serialize;
 use std::collections::{HashMap, HashSet, BTreeMap, LinkedList};
 use std::collections::hash_map::Entry;
@@ -7,19 +8,40 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::io::Result as IOResult;
 use std::string::ToString;
-
 /**************************/
 /*** Struct definitions ***/
 /**************************/
 
+/// Holds the data and metadata for this database.
+///
+/// A node can have any number of properties in any fashion (i.e. there is no schema)
+///
+///
+/// # Example
+///
+/// ```
+/// use graphael::{Graph, PropVal};
+///
+/// let mut graph = Graph::new();
+/// let id = graph.add_node();
+/// let node = graph.get_node_mut(id).unwrap();
+/// node.props.insert("this_prop".to_string().into_boxed_str(), PropVal::Int(5)));
+/// ```
+
 #[derive(PartialEq, Debug)]
 pub struct Node {
-    pub id: NodeIndex,
+    ///The ID of this node.  Should not be changed
+    id: NodeIndex,
+
+    /// The properties associated with this node.  The boxed string datatype can be generated from a string literal via `"property".to_string().into_boxed_str()`
     pub props:HashMap<Box<str>, PropVal>,
 }
 
+
+/// Connects nodes together with labeled relationships.  Will soon be removed from the public interface
 #[derive(Debug, PartialEq)]
 pub struct Edge {
+    /// The names of the relationships between nodes.
 	pub labels: HashSet<Box<str>>
 }
 
@@ -30,9 +52,23 @@ pub struct Path<'a> {
 
 }
 
+/// Represents a value in a property field.
+///
+/// # Examples
+///
+/// ```
+/// # use graphael::{Graph, PropVal};
+/// # let mut graph = Graph::new();
+/// # let id = graph.add_node();
+/// # let node = graph.get_node_mut(id).unwrap();
+/// node.props.insert("this_prop".to_string().into_boxed_str(), PropVal::Int(5)));
+/// node.props.insert("another_prop".to_string().into_boxed_str(), PropVal::String("a value".to_string().into_boxed_str())));
+/// ```
 #[derive(Debug, PartialEq)]
 pub enum PropVal {
+    /// An integer value
 	Int(i64),
+    /// A string value.  Can be converted from a string literal via `"value".to_string().into_boxed_str()`
 	String(Box<str>)
 }
 
@@ -279,10 +315,13 @@ impl Graph {
 
 	/// Adds a Node to the Graph with the specified properties
 	pub fn add_node_with_props(&mut self, props: HashMap<Box<str>, PropVal>) -> NodeIndex {
-		let id = self.add_node();
-		if let Some(node) = self.get_node_mut(id) {
-			node.props = props;
-		}
+		//let id = self.add_node();
+        let id = self.get_node_next_id();
+        let node:Node = Node {
+            id: id,
+            props: props
+        };
+        self.nodes.insert(id, node);
 		id
 	}
 
