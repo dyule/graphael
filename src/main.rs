@@ -8,6 +8,7 @@ use graphael::{Graph, PropVal};
 
 // Shorthand HashMap
 // dict!{"yes" => "1", "no" => "0"}
+#[macro_export]
 macro_rules! dict (
 	{ $($key:expr => $value:expr),+ } => {
         {

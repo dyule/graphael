@@ -8,6 +8,9 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::io::Result as IOResult;
 use std::string::ToString;
+use matching::*;
+
+mod matching;
 /**************************/
 /*** Struct definitions ***/
 /**************************/
@@ -25,7 +28,7 @@ use std::string::ToString;
 /// let mut graph = Graph::new();
 /// let id = graph.add_node();
 /// let node = graph.get_node_mut(id).unwrap();
-/// node.props.insert("this_prop".to_string().into_boxed_str(), PropVal::Int(5)));
+/// node.props.insert("this_prop".to_string().into_boxed_str(), PropVal::Int(5));
 /// ```
 
 #[derive(PartialEq, Debug)]
@@ -45,6 +48,30 @@ pub struct Edge {
 	pub labels: HashSet<Box<str>>
 }
 
+// pub struct PathNode<'a> {
+//     node: NodeIndex,
+//     outgoing: Option<PathEdge<'a>>
+// }
+//
+// pub struct PathEdge<'a> {
+//     edge: &'a Edge,
+//     terminus: Box<PathNode<'a>>
+// }
+//
+// pub struct PathResult<'a> {
+//     head: PathNode<'a>,
+//     length: usize
+// }
+
+pub struct DAG {
+    roots: [&DAGNode]
+}
+
+pub struct DAGNode {
+    id: NodeIndex,
+    connected_to: Vec<&DAGNode>
+}
+
 #[derive(Debug, Clone)]
 pub struct Path<'a> {
 	pub nodes: Vec<NodeIndex>,
@@ -61,8 +88,8 @@ pub struct Path<'a> {
 /// # let mut graph = Graph::new();
 /// # let id = graph.add_node();
 /// # let node = graph.get_node_mut(id).unwrap();
-/// node.props.insert("this_prop".to_string().into_boxed_str(), PropVal::Int(5)));
-/// node.props.insert("another_prop".to_string().into_boxed_str(), PropVal::String("a value".to_string().into_boxed_str())));
+/// node.props.insert("this_prop".to_string().into_boxed_str(), PropVal::Int(5));
+/// node.props.insert("another_prop".to_string().into_boxed_str(), PropVal::String("a value".to_string().into_boxed_str()));
 /// ```
 #[derive(Debug, PartialEq)]
 pub enum PropVal {
@@ -509,6 +536,138 @@ impl Graph {
 			}
 	}
 
+    fn get_base_nodes(&self, node_matcher: &NodeMatcher) -> Vec<DAGNode> {
+        let mut base_nodes = Vec::new();
+        if let &NodeMatcher::Id(id) = node_matcher {
+            if self.nodes.contains_key(&id) {
+                base_nodes.push(DAGNode{
+                    id: id,
+                    connected_to: vec!{}
+                });
+            }
+        } else {
+            for base_node in self.nodes.values() {
+                if node_matcher.matches(base_node) {
+                    base_nodes.push(DAGNode{
+                        id: base_node.id,
+                        connected_to: vec!{}
+                    });
+                }
+            }
+        }
+        base_nodes
+
+    }
+
+    fn match_edge_sequence<'a, 'b>(&'a self, open_set: Vec<DAGNode>, mut closed_set: HashSet<NodeIndex>, labels: &'b Vec<Box<str>>, min: usize, max: usize) {
+        let mut new_set = vec!{};
+        for iteration in 0..max {
+            let mut should_continue = false;
+            for current in open_set {
+                if let Some(edge) = self.edges.get(&current.id) {
+                    let mut matched_one = false;
+                    for label in labels {
+                        for (&id, e) in edge.iter() {
+                            if e.labels.contains(label) {
+                                println!("FOUND A MATCH");
+                                should_continue = true;
+                                let path = PathResult {
+                                    head: PathNode {
+                                        node: id,
+                                        outgoing: Some(
+                                            PathEdge {
+                                                edge: &e,
+                                                terminus: Box::new(base_result.head)
+                                            }
+                                        )
+                                    },
+                                    length: 1
+                                };
+                                new_results.push(path);
+                                break 'outer;
+
+                            }
+                        }
+                    }
+                    if !matched_one && iteration >= min  {
+                        new_results.push(base_result);
+                    }
+                }
+            }
+            base_paths = new_results;
+            if !should_continue {
+                break;
+            }
+            new_results = vec!{};
+        }
+        base_paths
+    }
+
+    pub fn find(&self, matcher: PathMatcher) -> Vec<PathResult> {
+        let mut paths = vec![];
+        match matcher {
+            PathMatcher::Label(label, node) => {
+                let base_nodes = self.get_base_nodes(&node);
+                paths = self.match_edge_sequence(base_nodes, &vec!{label}, 1, 1);
+                // for base_node in base_nodes {
+                //     if let Some(edge) = self.edges.get(&base_node) {
+                //         for (&id, e) in edge.iter() {
+            	// 			if e.labels.contains(label) {
+                //                 let path = PathResult {
+                //                     head: PathNode {
+                //                         node: base_node,
+                //                         outgoing: Some(
+                //                             PathEdge {
+                //                                 edge: &e,
+                //                                 terminus: Box::new(PathNode {
+                //                                     node: id,
+                //                                     outgoing: None
+                //                                 })
+                //                             }
+                //                         )
+                //                     },
+                //                     length: 1
+                //                 };
+                //                 paths.push(path);
+            	// 			}
+                //         }
+                //     }
+                // }
+            },
+            PathMatcher::Labels(ref labels, ref node) => {
+                let base_nodes = self.get_base_nodes(node);
+                // for base_node in base_nodes {
+                //     if let Some(edge) = self.edges.get(&base_node) {
+                //         for label in labels {
+                //             for (&id, e) in edge.iter() {
+                // 				if e.labels.contains(label) {
+                //                     let path = PathResult {
+                //                         head: PathNode {
+                //                             node: base_node,
+                //                             outgoing: Some(
+                //                                 PathEdge {
+                //                                     edge: &e,
+                //                                     terminus: Box::new(PathNode {
+                //                                         node: id,
+                //                                         outgoing: None
+                //                                     })
+                //                                 }
+                //                             )
+                //                         },
+                //                         length: 1
+                //                     };
+                //                     paths.push(path);
+                // 				}
+                //             }
+                //         }
+                //     }
+                // }
+            }
+            _ => {}
+        }
+        paths
+    }
+
 	pub fn path_from(&self, source: NodeIndex, edge_predicate: &Fn(&str) -> bool, end_predicate: &Fn(NodeIndex) -> bool) -> Option<Path> {
 		let mut open_set = LinkedList::new();
 		let mut closed_set = HashSet::new();
@@ -550,6 +709,7 @@ impl Graph {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::matching::*;
     use rustc_serialize::json::{Json, ToJson};
 
     macro_rules! prop_map (
@@ -747,4 +907,9 @@ mod tests {
 		}
 
 	}
+    #[test]
+    fn test_find() {
+        let g = Graph::read_from_file("data/langs.graph".to_string());
+        assert!(g.find(node_with_id(7).connected_by_label("influenced")).len() == 9);
+    }
 }
