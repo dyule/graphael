@@ -8,6 +8,8 @@ use rustc_serialize::json::{self, Json, ToJson};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::io::Result as IOResult;
+use std::cell::RefCell;
+use std::ops::DerefMut;
 use std::string::ToString;
 use matching::*;
 
@@ -23,8 +25,9 @@ mod matching;
 ///
 /// # Example
 ///
-/// ```
 ///
+/// ```
+/// # use graphael::{Graph, PropVal};
 /// let mut graph = Graph::new();
 /// let id = graph.add_node();
 /// let node = graph.get_node_mut(id).unwrap();
@@ -64,14 +67,14 @@ pub struct Edge {
 // }
 
 pub struct DAG<'a> {
-    roots: HashSet<&'a DAGNode>,
-    nodes: HashMap<NodeIndex, DAGNode>
+    roots: HashSet<&'a DAGNode<'a>>,
+    nodes: HashMap<NodeIndex, DAGNode<'a>>
 }
 
-pub struct DAGNode {
+pub struct DAGNode<'a> {
     id: NodeIndex,
-    connected_to: Vec<NodeIndex>,
-    parent: Option<NodeIndex>
+    connected_to: Vec<&'a DAGNode<'a>>,
+    parent: Option<RefCell<&'a DAGNode<'a>>>
 }
 
 #[derive(Debug, Clone)]
@@ -279,15 +282,15 @@ impl Decodable for Graph {
     }
 }
 
-impl PartialEq<DAGNode> for DAGNode {
+impl<'a> PartialEq<DAGNode<'a>> for DAGNode<'a> {
     fn eq(&self, other: &DAGNode) -> bool {
         self.id == other.id
     }
 }
 
-impl Eq for DAGNode {}
+impl<'a> Eq for DAGNode<'a> {}
 
-impl Hash for DAGNode {
+impl <'a> Hash for DAGNode<'a> {
     fn hash<H>(&self, state: &mut H) where H: Hasher {
         self.id.hash(state)
     }
@@ -577,140 +580,140 @@ impl Graph {
 
     }
 
-    fn trim_path<'a, 'b>(&'b self, mut graph: & mut DAG<'a>, branch_tail: &'a DAGNode) {
-        graph.nodes.remove(&branch_tail.id);
-        let id = branch_tail.id;
-        if let Some(ref parent_id) = branch_tail.parent {
-            if let Some(mut parent) = graph.nodes.get_mut(parent_id) {
-                parent.connected_to.retain(|x| x != &id);
-                if parent.connected_to.len() == 0 {
-                    //self.trim_path(graph, parent);
-                }
-            }
-        } else {
-            graph.roots.remove(branch_tail);
-        }
-    }
-
-    fn match_edge_sequence<'a, 'b, 'c, 'd>(&'a self, mut graph: &'c mut DAG<'a>, base_nodes: Vec<&'a DAGNode>, mut closed_set: HashSet<NodeIndex>, labels: &'b Vec<Box<str>>, min: usize, max: usize) {
-        let mut new_set: Vec<& 'a DAGNode> = Vec::new();
-        let mut open_set = & base_nodes;
-        for iteration in 0..max {
-            let mut should_continue = false;
-            for current in open_set {
-                if let Some(edge) = self.edges.get(&current.id) {
-                    let mut matched_one = false;
-                    for label in labels {
-                        for (&id, e) in edge.iter() {
-                            if !closed_set.contains(&id) {
-                                if e.labels.contains(label) {
-                                    println!("FOUND A MATCH");
-                                    should_continue = true;
-                                    let mut new_node = DAGNode {
-                                        id: id,
-                                        connected_to: Vec::new(),
-                                        parent: Some(current.id)
-                                    };
-
-                                    closed_set.insert(id);
-                                    new_set.push(current);
-                                    let mut parent = graph.nodes.get_mut(&current.id).unwrap();
-                                    parent.connected_to.push(id);
-
-
-                                }
-                            }
-                        }
-                    }
-                    if !matched_one && iteration >= min  {
-                        //new_results.push(base_result);
-                    }
-                }
-            }
-            //base_paths = new_results;
-            if !should_continue {
-                break;
-            }
-            open_set = &new_set;
-            new_set = vec!{};
-        }
-        //base_paths
-    }
+    // fn trim_path<'a>(&self, mut graph: &mut DAG<'a>, mut branch_tail: &'a mut DAGNode<'a>) {
+    //     graph.nodes.remove(&branch_tail.id);
+    //     let id = branch_tail.id;
+    //     if let Some(ref mut parent_ref) = branch_tail.parent {
+    //         let mut parent = parent_ref.borrow_mut();
+    //         parent.connected_to.retain(|x| x.id != id);
+    //         if parent.connected_to.len() == 0 {
+    //             self.trim_path(graph, parent.deref_mut());
+    //         }
+    //
+    //     } else {
+    //         graph.roots.remove(branch_tail);
+    //     }
+    // }
+    //
+    // fn match_edge_sequence<'a, 'b, 'c, 'd>(&'a self, mut graph: &'c mut DAG<'a>, base_nodes: &'d Vec<&'a DAGNode<'a>>, mut closed_set: HashSet<NodeIndex>, labels: &'b Vec<Box<str>>, min: usize, max: usize) {
+    //     let mut new_set: Vec<& 'a DAGNode> = Vec::new();
+    //     let mut open_set = base_nodes;
+    //     for iteration in 0..max {
+    //         let mut should_continue = false;
+    //         for current in open_set {
+    //             if let Some(edge) = self.edges.get(&current.id) {
+    //                 let mut matched_one = false;
+    //                 for label in labels {
+    //                     for (&id, e) in edge.iter() {
+    //                         if !closed_set.contains(&id) {
+    //                             if e.labels.contains(label) {
+    //                                 println!("FOUND A MATCH");
+    //                                 should_continue = true;
+    //                                 let mut new_node = DAGNode {
+    //                                     id: id,
+    //                                     connected_to: Vec::new(),
+    //                                     parent: Some(RefCell::new(current))
+    //                                 };
+    //
+    //                                 closed_set.insert(id);
+    //                                 new_set.push(current);
+    //                                 let mut parent = graph.nodes.get_mut(&current.id).unwrap();
+    //                                 parent.connected_to.push(current);
+    //
+    //
+    //                             }
+    //                         }
+    //                     }
+    //                 }
+    //                 if !matched_one && iteration >= min  {
+    //                     //new_results.push(base_result);
+    //                 }
+    //             }
+    //         }
+    //         //base_paths = new_results;
+    //         if !should_continue {
+    //             break;
+    //         }
+    //         open_set = &new_set;
+    //         new_set = vec!{};
+    //     }
+    //     //base_paths
+    // }
 
     pub fn find<'a, 'b>(&'a self, matcher: PathMatcher) -> DAG<'a> {
         let mut graph = DAG {
             roots: HashSet::new(),
             nodes: HashMap::new(),
         };
-        match matcher {
-            PathMatcher::Label(label, node) => {
-                let base_nodes = self.get_base_nodes(&node);
-                let mut open_set = Vec::new();
-                for node in base_nodes {
-                    graph.nodes.insert(node.id, node);
-
-                }
-                for (id, node) in graph.nodes.iter() {
-                    open_set.push(node);
-                }
-                //graph.roots.extend(&graph.nodes);
-                self.match_edge_sequence(&mut graph, open_set, HashSet::new(), &vec!{label}, 1, 1);
-                // for base_node in base_nodes {
-                //     if let Some(edge) = self.edges.get(&base_node) {
-                //         for (&id, e) in edge.iter() {
-            	// 			if e.labels.contains(label) {
-                //                 let path = PathResult {
-                //                     head: PathNode {
-                //                         node: base_node,
-                //                         outgoing: Some(
-                //                             PathEdge {
-                //                                 edge: &e,
-                //                                 terminus: Box::new(PathNode {
-                //                                     node: id,
-                //                                     outgoing: None
-                //                                 })
-                //                             }
-                //                         )
-                //                     },
-                //                     length: 1
-                //                 };
-                //                 paths.push(path);
-            	// 			}
-                //         }
-                //     }
-                // }
-            },
-            PathMatcher::Labels(ref labels, ref node) => {
-                let base_nodes = self.get_base_nodes(node);
-                // for base_node in base_nodes {
-                //     if let Some(edge) = self.edges.get(&base_node) {
-                //         for label in labels {
-                //             for (&id, e) in edge.iter() {
-                // 				if e.labels.contains(label) {
-                //                     let path = PathResult {
-                //                         head: PathNode {
-                //                             node: base_node,
-                //                             outgoing: Some(
-                //                                 PathEdge {
-                //                                     edge: &e,
-                //                                     terminus: Box::new(PathNode {
-                //                                         node: id,
-                //                                         outgoing: None
-                //                                     })
-                //                                 }
-                //                             )
-                //                         },
-                //                         length: 1
-                //                     };
-                //                     paths.push(path);
-                // 				}
-                //             }
-                //         }
-                //     }
-                // }
-            }
-            _ => {}
-        }
+        // match matcher {
+        //     PathMatcher::Label(label, node) => {
+        //         let base_nodes = self.get_base_nodes(&node);
+        //         let mut open_set = Vec::new();
+        //         for node in base_nodes {
+        //             graph.nodes.insert(node.id, node);
+        //
+        //         }
+        //         for (id, node) in graph.nodes.iter() {
+        //             open_set.push(node);
+        //         }
+        //         //graph.roots.extend(&graph.nodes);
+        //         self.match_edge_sequence(&mut graph, &open_set, HashSet::new(), &vec!{label}, 1, 1);
+        //         // for base_node in base_nodes {
+        //         //     if let Some(edge) = self.edges.get(&base_node) {
+        //         //         for (&id, e) in edge.iter() {
+        //     	// 			if e.labels.contains(label) {
+        //         //                 let path = PathResult {
+        //         //                     head: PathNode {
+        //         //                         node: base_node,
+        //         //                         outgoing: Some(
+        //         //                             PathEdge {
+        //         //                                 edge: &e,
+        //         //                                 terminus: Box::new(PathNode {
+        //         //                                     node: id,
+        //         //                                     outgoing: None
+        //         //                                 })
+        //         //                             }
+        //         //                         )
+        //         //                     },
+        //         //                     length: 1
+        //         //                 };
+        //         //                 paths.push(path);
+        //     	// 			}
+        //         //         }
+        //         //     }
+        //         // }
+        //     },
+        //     PathMatcher::Labels(ref labels, ref node) => {
+        //         let base_nodes = self.get_base_nodes(node);
+        //         // for base_node in base_nodes {
+        //         //     if let Some(edge) = self.edges.get(&base_node) {
+        //         //         for label in labels {
+        //         //             for (&id, e) in edge.iter() {
+        //         // 				if e.labels.contains(label) {
+        //         //                     let path = PathResult {
+        //         //                         head: PathNode {
+        //         //                             node: base_node,
+        //         //                             outgoing: Some(
+        //         //                                 PathEdge {
+        //         //                                     edge: &e,
+        //         //                                     terminus: Box::new(PathNode {
+        //         //                                         node: id,
+        //         //                                         outgoing: None
+        //         //                                     })
+        //         //                                 }
+        //         //                             )
+        //         //                         },
+        //         //                         length: 1
+        //         //                     };
+        //         //                     paths.push(path);
+        //         // 				}
+        //         //             }
+        //         //         }
+        //         //     }
+        //         // }
+        //     }
+        //     _ => {}
+        // }
         graph
     }
 
