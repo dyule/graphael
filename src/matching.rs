@@ -1,4 +1,4 @@
-use ::{NodeIndex, Node, PropVal};
+use ::{NodeIndex, Node, PropVal, Edge};
 use std::ops::Deref;
 use std::cell::Cell;
 use std::fmt;
@@ -25,7 +25,7 @@ pub enum PathMatcher {
     Or(Box<PathMatcher>, Box<PathMatcher>)
 }
 
-type State = usize;
+pub type State = usize;
 
 #[derive(PartialEq, Debug, Eq, Ord, Clone)]
 enum Transition<'a> {
@@ -110,6 +110,51 @@ fn gather_states<'a>(starting_state: State, final_state: State, transitions: &mu
 
 
 impl<'a> MatchingAutomaton<'a> {
+
+
+    pub fn next_state_node(&self, state: State, node: &Node) -> Option<State> {
+        if state >= self.transitions.len() {
+            panic!("Tried to transition from state that wasn't in this automata")
+        }
+        for transition in self.transitions.get(state).unwrap() {
+            match *transition {
+                Transition::NodeTransition(ref matcher, new_state) => {
+                    if matcher.matches(node) {
+                        return Some(new_state)
+                    }
+                },
+                Transition::EpsilonTransition(new_state) => {
+                    if let Some(sub_state) = self.next_state_node(new_state, node) {
+                        return Some(sub_state)
+                    }
+                },
+                _ => {}
+            }
+        }
+        return None
+    }
+
+    pub fn next_state_edge(&self, state: State, edge: &Edge) -> Option<State> {
+        if state >= self.transitions.len() {
+            panic!("Tried to transition from state that wasn't in this automata")
+        }
+        for transition in self.transitions.get(state).unwrap() {
+            match *transition {
+                Transition::EdgeTransition(label_match, new_state) => {
+                    if edge.labels.contains(label_match) {
+                        return Some(new_state)
+                    }
+                },
+                Transition::EpsilonTransition(new_state) => {
+                    if let Some(sub_state) = self.next_state_edge(new_state, edge) {
+                        return Some(sub_state)
+                    }
+                },
+                _ => {}
+            }
+        }
+        return None
+    }
 
     /// Create a MatchingAutomaton that accepts exactly the paths described by `matcher`.
     pub fn from_path_matcher(matcher: &'a PathMatcher) -> MatchingAutomaton<'a> {
