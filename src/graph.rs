@@ -13,7 +13,7 @@ use std::ops::DerefMut;
 use std::string::ToString;
 use matching::*;
 
-mod matching;
+pub mod matching;
 /**************************/
 /*** Struct definitions ***/
 /**************************/
@@ -96,7 +96,7 @@ pub struct Path<'a> {
 /// node.props.insert("this_prop".to_string().into_boxed_str(), PropVal::Int(5));
 /// node.props.insert("another_prop".to_string().into_boxed_str(), PropVal::String("a value".to_string().into_boxed_str()));
 /// ```
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PropVal {
     /// An integer value
 	Int(i64),
