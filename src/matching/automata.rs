@@ -1,28 +1,15 @@
-use ::{NodeIndex, Node, PropVal, Edge};
-use std::ops::Deref;
 use std::cell::Cell;
 use std::fmt;
 use std::cmp;
 use std::collections::{HashMap, HashSet, VecDeque};
+use super::{NodeMatcher, PathMatcher};
+use ::{Node, Edge};
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum NodeMatcher {
-    Any,
-    Prop(Box<str>),
-    PropVal(Box<str>, Box<PropVal>),
-    Id(NodeIndex),
-    And(Box<NodeMatcher>, Box<NodeMatcher>),
-    Or(Box<NodeMatcher>, Box<NodeMatcher>)
-}
-
-static ANY: NodeMatcher =  NodeMatcher::Any;
-
-pub enum PathMatcher {
-    Labels(Vec<Box<str>>, NodeMatcher),
-    Repeat(Option<u32>, Option<u32>, Box<PathMatcher>),
-    ThenLabels(Vec<Box<str>>, Box<PathMatcher>),
-    To(NodeMatcher, Box<PathMatcher>),
-    Or(Box<PathMatcher>, Box<PathMatcher>)
+#[derive(PartialEq)]
+/// An automata that can match paths in a graph.
+pub struct MatchingAutomaton<'a> {
+    transitions: Vec<Vec<Transition<'a>>>,
+    final_state: State
 }
 
 pub type State = usize;
@@ -38,11 +25,7 @@ struct StateGenerator {
     max_state: Cell<State>
 }
 
-#[derive(PartialEq)]
-/// An automata that can match paths in a graph.
-pub struct MatchingAutomaton<'a> {
-    transitions: Vec<Vec<Transition<'a>>>
-}
+
 
 impl<'a> fmt::Debug for MatchingAutomaton<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -156,13 +139,18 @@ impl<'a> MatchingAutomaton<'a> {
         return None
     }
 
+    pub fn is_complete(&self, state: State) -> bool {
+        return state == self.final_state
+    }
+
     /// Create a MatchingAutomaton that accepts exactly the paths described by `matcher`.
     pub fn from_path_matcher(matcher: &'a PathMatcher) -> MatchingAutomaton<'a> {
         let mut transitions = vec![Vec::new()];
         let factory = StateGenerator::new();
         let start_state = factory.next_state();
-        MatchingAutomaton::process_path_matcher(matcher, &factory, start_state, start_state, &mut transitions);
-        MatchingAutomaton{transitions:transitions}
+        let final_state = MatchingAutomaton::process_path_matcher(matcher, &factory, start_state, start_state, &mut transitions);
+        MatchingAutomaton{transitions:transitions, final_state: final_state}
+
     }
 
     fn process_path_matcher(matcher: &'a PathMatcher, factory: &StateGenerator, starting_state: State, final_state: State, transitions: &mut Vec<Vec<Transition<'a>>>) -> State {
@@ -361,7 +349,8 @@ impl<'a> MatchingAutomaton<'a> {
             new_transitions.push(my_transitions);
         }
         MatchingAutomaton {
-            transitions: new_transitions
+            transitions: new_transitions,
+            final_state: old_to_new[&self.final_state].clone()
         }
     }
 
@@ -381,104 +370,10 @@ impl StateGenerator {
     }
 }
 
-pub fn node_with_prop(prop: &str) -> NodeMatcher {
-    NodeMatcher::Prop(prop.to_string().into_boxed_str())
-}
-
-pub fn node_with_prop_val(prop: &str, val: PropVal) -> NodeMatcher {
-    NodeMatcher::PropVal(prop.to_string().into_boxed_str(), Box::new(val))
-}
-
-pub fn node_with_id(id: NodeIndex) -> NodeMatcher {
-    NodeMatcher::Id(id)
-}
-
-impl NodeMatcher {
-    pub fn and_prop(self, prop: &str) -> NodeMatcher {
-        NodeMatcher::And(Box::new(node_with_prop(prop)), Box::new(self))
-    }
-
-    pub fn or_prop(self, prop: &str) -> NodeMatcher {
-        NodeMatcher::Or(Box::new(node_with_prop(prop)), Box::new(self))
-    }
-
-    pub fn and_prop_val(self, prop: &str, val: PropVal) -> NodeMatcher {
-        NodeMatcher::And(Box::new(node_with_prop_val(prop, val)), Box::new(self))
-    }
-
-    pub fn or_prop_val(self, prop: &str, val: PropVal) -> NodeMatcher {
-        NodeMatcher::Or(Box::new(node_with_prop_val(prop, val)), Box::new(self))
-    }
-
-    pub fn connected_by_label(self, label: &str) -> PathMatcher {
-        PathMatcher::Labels(vec![label.to_string().into_boxed_str()], self)
-    }
-
-    pub fn connected_by_one_of(self, labels: Vec<Box<str>>) -> PathMatcher {
-        PathMatcher::Labels(labels, self)
-    }
-
-    pub fn matches(&self, node: &Node) -> bool {
-        match *self {
-            NodeMatcher::Prop(ref prop) => node.props.contains_key(prop),
-            NodeMatcher::PropVal(ref prop, ref val) => match node.props.get(prop) {
-                Some(v) => v == val.deref(),
-                None => false
-            },
-            NodeMatcher::Id(id) => node.id == id,
-            NodeMatcher::And(ref lhs, ref rhs) => lhs.matches(node) && rhs.matches(node),
-            NodeMatcher::Or(ref lhs, ref rhs) => lhs.matches(node) || rhs.matches(node),
-            NodeMatcher::Any => true
-        }
-    }
-
-}
-
-impl PathMatcher {
-    pub fn repeat(self, min: Option<u32>, max: Option<u32>) -> PathMatcher {
-        PathMatcher::Repeat(min, max, Box::new(self))
-    }
-
-    pub fn then_label(self, label: &str) -> PathMatcher {
-        PathMatcher::ThenLabels(vec![label.to_string().into_boxed_str()], Box::new(self))
-    }
-
-    pub fn then_one_of(self, labels: Vec<Box<str>>) -> PathMatcher {
-        PathMatcher::ThenLabels(labels, Box::new(self))
-    }
-
-    pub fn to(self, node: NodeMatcher) -> PathMatcher {
-        PathMatcher::To(node, Box::new(self))
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{node_with_prop, node_with_id, MatchingAutomaton, Transition, NodeMatcher, ANY, PathMatcher};
-    use ::{PropVal, Graph};
-    macro_rules! dict (
-    	{ $($key:expr => $value:expr),+ } => {
-            {
-                let mut dict = ::std::collections::HashMap::new();
-                $(
-                    dict.insert($key.to_string().into_boxed_str(), PropVal::String($value.to_string().into_boxed_str()));
-                )+
-                dict
-            }
-         };
-    );
-    #[test]
-    fn test_node_matcher() {
-        let node_matcher = node_with_prop("prop1").and_prop_val("prop2", PropVal::String("val2".to_string().into_boxed_str()));
-        let mut g = Graph::new();
-        let n1 = g.add_node_with_props(dict!{"prop1" => "val1", "prop2" => "val2"});
-        let n2 = g.add_node_with_props(dict!{"prop1" =>  "val1", "prop2" => "val3"});
-        let n3 = g.add_node_with_props(dict!{"prop2" =>  "val2"});
-        assert!(node_matcher.matches(g.get_node(n1).unwrap()));
-        assert!(!node_matcher.matches(g.get_node(n2).unwrap()));
-        assert!(!node_matcher.matches(g.get_node(n3).unwrap()));
-
-    }
+    use super::{MatchingAutomaton, Transition};
+    use super::super::{node_with_prop, node_with_id, NodeMatcher, PathMatcher, ANY};
 
     #[test]
     fn test_node_label_match() {
@@ -492,7 +387,8 @@ mod tests {
             vec![]
         ];
         assert!(MatchingAutomaton{
-            transitions: expected_transitions
+            transitions: expected_transitions,
+            final_state: 2
         } == automaton)
     }
 
@@ -511,7 +407,8 @@ mod tests {
             vec![]
         ];
         assert!(MatchingAutomaton{
-            transitions: expected_transitions
+            transitions: expected_transitions,
+            final_state: 2
         } == automaton)
     }
 
@@ -531,7 +428,8 @@ mod tests {
             vec![]
         ];
         assert!(MatchingAutomaton{
-            transitions: expected_transitions
+            transitions: expected_transitions,
+            final_state: 4
         } == automaton)
     }
 
@@ -556,7 +454,8 @@ mod tests {
             vec![Transition::EpsilonTransition(4)]
         ];
         assert!(MatchingAutomaton{
-            transitions: expected_transitions
+            transitions: expected_transitions,
+            final_state: 8
         } == automaton.to_cannonical())
     }
 
@@ -582,7 +481,8 @@ mod tests {
         ];
 
         assert!(MatchingAutomaton{
-            transitions: expected_transitions
+            transitions: expected_transitions,
+            final_state: 2,
         } == automaton.to_cannonical())
     }
 
@@ -609,7 +509,8 @@ mod tests {
         ];
 
         assert!(MatchingAutomaton{
-            transitions: expected_transitions
+            transitions: expected_transitions,
+            final_state: 3
         } == automaton.to_cannonical())
     }
 }

@@ -1,6 +1,6 @@
 //! Graphael is a lightweight graph database suitable for embedding in other applications.
 extern crate rustc_serialize;
-use std::collections::{HashMap, HashSet, BTreeMap, LinkedList};
+use std::collections::{HashMap, HashSet, BTreeMap, LinkedList, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::collections::hash_map::Entry;
 use rustc_serialize::{Decoder, Decodable};
@@ -66,15 +66,16 @@ pub struct Edge {
 //     length: usize
 // }
 
-pub struct DAG<'a> {
-    roots: HashSet<&'a DAGNode<'a>>,
-    nodes: HashMap<NodeIndex, DAGNode<'a>>
+#[derive(Debug)]
+pub struct DAG {
+    roots: HashSet<NodeIndex>,
+    nodes: HashMap<NodeIndex, DAGNode>
 }
 
-pub struct DAGNode<'a> {
+#[derive(Debug)]
+pub struct DAGNode {
     id: NodeIndex,
-    connected_to: Vec<&'a DAGNode<'a>>,
-    parent: Option<RefCell<&'a DAGNode<'a>>>
+    connected_to: Vec<NodeIndex>,
 }
 
 #[derive(Debug, Clone)]
@@ -282,15 +283,15 @@ impl Decodable for Graph {
     }
 }
 
-impl<'a> PartialEq<DAGNode<'a>> for DAGNode<'a> {
+impl<'a> PartialEq<DAGNode> for DAGNode {
     fn eq(&self, other: &DAGNode) -> bool {
         self.id == other.id
     }
 }
 
-impl<'a> Eq for DAGNode<'a> {}
+impl<'a> Eq for DAGNode {}
 
-impl <'a> Hash for DAGNode<'a> {
+impl <'a> Hash for DAGNode {
     fn hash<H>(&self, state: &mut H) where H: Hasher {
         self.id.hash(state)
     }
@@ -561,7 +562,6 @@ impl Graph {
             if self.nodes.contains_key(&id) {
                 base_nodes.push(DAGNode{
                     id: id,
-                    parent: None,
                     connected_to: vec!{}
                 });
             }
@@ -570,7 +570,6 @@ impl Graph {
                 if node_matcher.matches(base_node) {
                     base_nodes.push(DAGNode{
                         id: base_node.id,
-                        parent: None,
                         connected_to: vec!{}
                     });
                 }
@@ -640,7 +639,55 @@ impl Graph {
     //     //base_paths
     // }
 
-    pub fn find<'a, 'b>(&'a self, matcher: PathMatcher) -> DAG<'a> {
+    pub fn match_paths<'a>(&'a self, matcher: &MatchingAutomaton<'a>) -> MatchResult {
+        let mut closed_set = HashSet::new();
+        let mut open_set = VecDeque::new();
+        let mut parent_lookup = HashMap::new();
+        let mut finished_nodes = HashSet::new();
+        for node in self.nodes.values() {
+            if let Some(next_state) = matcher.next_state_node(0, node) {
+                parent_lookup.insert(node.id, Vec::new());
+                if matcher.is_complete(next_state) {
+                    finished_nodes.insert(node.id);
+                } else {
+                    open_set.push_back((node, next_state));
+
+                }
+            }
+        }
+
+        while let Some((node, state)) = open_set.pop_front() {
+            if !closed_set.contains(&(node.id, state)) {
+                closed_set.insert((node.id, state));
+                let mut found_match = false;
+                for (end_node_id, edge) in self.edges.get(&node.id).unwrap() {
+                    if let Some(edge_state) = matcher.next_state_edge(state, &edge) {
+                        if matcher.is_complete(edge_state) {
+                            parent_lookup.entry(*end_node_id,).or_insert(Vec::new()).push((node.id, edge));
+                            finished_nodes.insert(*end_node_id);
+                            found_match = true;
+                        } else {
+                            let end_node = self.get_node(*end_node_id).unwrap();
+                            if let Some(next_state) = matcher.next_state_node(edge_state, end_node) {
+                                if matcher.is_complete(next_state) {
+                                    found_match = true;
+                                }
+                                parent_lookup.entry(*end_node_id,).or_insert(Vec::new()).push((node.id, edge));
+                                open_set.push_back((end_node, next_state))
+                            }
+                        }
+                    }
+                }
+                if !found_match && matcher.is_complete(state) {
+                    finished_nodes.insert(node.id);
+                }
+            }
+
+        }
+        MatchResult::new(parent_lookup, finished_nodes)
+    }
+
+    pub fn find<'a, 'b>(&'a self, matcher: PathMatcher) -> DAG {
         let mut graph = DAG {
             roots: HashSet::new(),
             nodes: HashMap::new(),
@@ -758,7 +805,7 @@ impl Graph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::matching::*;
+    use super::matching::{NodeMatcher, node_with_id, MatchingAutomaton};
     use rustc_serialize::json::{Json, ToJson};
 
     macro_rules! prop_map (
@@ -960,5 +1007,14 @@ mod tests {
     fn test_find() {
         let g = Graph::read_from_file("data/langs.graph".to_string());
 //        assert!(g.find(node_with_id(7).connected_by_label("influenced")).len() == 9);
+    }
+
+    #[test]
+    fn test_matching() {
+        let g = Graph::read_from_file("data/langs.graph".to_string());
+        let matcher = node_with_id(7).connected_by_label("influenced").to(NodeMatcher::Any);
+        let result = g.match_paths(&MatchingAutomaton::from_path_matcher(&matcher));
+        println!("{:?}", result.to_dag());
+        panic!();
     }
 }
