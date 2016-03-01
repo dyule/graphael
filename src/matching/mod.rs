@@ -1,28 +1,35 @@
 use ::{NodeIndex, Node, PropVal};
 use std::ops::Deref;
+use std::collections::{HashSet};
 mod automata;
 mod results;
 pub use ::matching::automata::MatchingAutomaton;
 pub use ::matching::results::MatchResult;
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub enum NodeMatcher {
     Any,
     Prop(Box<str>),
-    PropVal(Box<str>, Box<PropVal>),
+    PropVal(Box<str>, PropVal),
     Id(NodeIndex),
     And(Box<NodeMatcher>, Box<NodeMatcher>),
     Or(Box<NodeMatcher>, Box<NodeMatcher>)
 }
 
+#[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Clone)]
+pub enum EdgeMatcher<'a> {
+    Any,
+    LabelList(Vec<&'a str>)
+}
+
 pub static ANY: NodeMatcher =  NodeMatcher::Any;
 
-pub enum PathMatcher {
-    Labels(Vec<Box<str>>, NodeMatcher),
-    Repeat(Option<u32>, Option<u32>, Box<PathMatcher>),
-    ThenLabels(Vec<Box<str>>, Box<PathMatcher>),
-    To(NodeMatcher, Box<PathMatcher>),
-    Or(Box<PathMatcher>, Box<PathMatcher>)
+pub enum PathMatcher<'a> {
+    Labels(Vec<&'a str>, NodeMatcher),
+    Repeat(Option<u32>, Option<u32>, Box<PathMatcher<'a>>),
+    ThenLabels(Vec<&'a str>, Box<PathMatcher<'a>>),
+    To(NodeMatcher, Box<PathMatcher<'a>>),
+    Or(Box<PathMatcher<'a>>, Box<PathMatcher<'a>>)
 }
 
 
@@ -32,7 +39,7 @@ pub fn node_with_prop(prop: &str) -> NodeMatcher {
 }
 
 pub fn node_with_prop_val(prop: &str, val: PropVal) -> NodeMatcher {
-    NodeMatcher::PropVal(prop.to_string().into_boxed_str(), Box::new(val))
+    NodeMatcher::PropVal(prop.to_string().into_boxed_str(), val)
 }
 
 pub fn node_with_id(id: NodeIndex) -> NodeMatcher {
@@ -57,10 +64,10 @@ impl NodeMatcher {
     }
 
     pub fn connected_by_label(self, label: &str) -> PathMatcher {
-        PathMatcher::Labels(vec![label.to_string().into_boxed_str()], self)
+        PathMatcher::Labels(vec![label], self)
     }
 
-    pub fn connected_by_one_of(self, labels: Vec<Box<str>>) -> PathMatcher {
+    pub fn connected_by_one_of<'a>(self, labels: Vec<&'a str>) -> PathMatcher<'a> {
         PathMatcher::Labels(labels, self)
     }
 
@@ -80,20 +87,37 @@ impl NodeMatcher {
 
 }
 
-impl PathMatcher {
-    pub fn repeat(self, min: Option<u32>, max: Option<u32>) -> PathMatcher {
+impl<'a> EdgeMatcher<'a> {
+    pub fn matches(&self, labels: &HashSet<Box<str>>) -> bool {
+        match *self {
+            EdgeMatcher::Any => true,
+            EdgeMatcher::LabelList(ref my_labels) => {
+                for my_label in my_labels.iter() {
+                    let my_label = my_label.to_string().into_boxed_str();
+                    if labels.contains(&my_label) {
+                        return true
+                    }
+                }
+                false
+            }
+        }
+    }
+}
+
+impl<'a> PathMatcher<'a> {
+    pub fn repeat(self, min: Option<u32>, max: Option<u32>) -> PathMatcher<'a> {
         PathMatcher::Repeat(min, max, Box::new(self))
     }
 
-    pub fn then_label(self, label: &str) -> PathMatcher {
-        PathMatcher::ThenLabels(vec![label.to_string().into_boxed_str()], Box::new(self))
+    pub fn then_label(self, label: &'a str) -> PathMatcher {
+        PathMatcher::ThenLabels(vec![label], Box::new(self))
     }
 
-    pub fn then_one_of(self, labels: Vec<Box<str>>) -> PathMatcher {
+    pub fn then_one_of(self, labels: Vec<&'a str>) -> PathMatcher<'a> {
         PathMatcher::ThenLabels(labels, Box::new(self))
     }
 
-    pub fn to(self, node: NodeMatcher) -> PathMatcher {
+    pub fn to(self, node: NodeMatcher) -> PathMatcher<'a> {
         PathMatcher::To(node, Box::new(self))
     }
 }

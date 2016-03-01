@@ -1,18 +1,19 @@
 //! Graphael is a lightweight graph database suitable for embedding in other applications.
 extern crate rustc_serialize;
-use std::collections::{HashMap, HashSet, BTreeMap, LinkedList, VecDeque};
+#[macro_use]
+extern crate nom;
+use std::collections::{HashMap, HashSet, LinkedList, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::collections::hash_map::Entry;
-use rustc_serialize::{Decoder, Decodable};
+use rustc_serialize::{Decoder, Decodable, Encoder, Encodable};
 use rustc_serialize::json::{self, Json, ToJson};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::io::Result as IOResult;
-use std::cell::RefCell;
-use std::ops::DerefMut;
 use std::string::ToString;
 use matching::*;
 
+pub mod queries;
 pub mod matching;
 /**************************/
 /*** Struct definitions ***/
@@ -45,36 +46,21 @@ pub struct Node {
 
 
 /// Connects nodes together with labeled relationships.  Will soon be removed from the public interface
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Edge {
     /// The names of the relationships between nodes.
 	pub labels: HashSet<Box<str>>
 }
 
-// pub struct PathNode<'a> {
-//     node: NodeIndex,
-//     outgoing: Option<PathEdge<'a>>
-// }
-//
-// pub struct PathEdge<'a> {
-//     edge: &'a Edge,
-//     terminus: Box<PathNode<'a>>
-// }
-//
-// pub struct PathResult<'a> {
-//     head: PathNode<'a>,
-//     length: usize
-// }
-
 #[derive(Debug)]
-pub struct DAG {
+pub struct DAG<'a> {
     roots: HashSet<NodeIndex>,
-    nodes: HashMap<NodeIndex, DAGNode>
+    nodes: HashMap<NodeIndex, DAGNode<'a>>
 }
 
 #[derive(Debug)]
-pub struct DAGNode {
-    id: NodeIndex,
+pub struct DAGNode<'a> {
+    node: &'a Node,
     connected_to: Vec<NodeIndex>,
 }
 
@@ -97,7 +83,7 @@ pub struct Path<'a> {
 /// node.props.insert("this_prop".to_string().into_boxed_str(), PropVal::Int(5));
 /// node.props.insert("another_prop".to_string().into_boxed_str(), PropVal::String("a value".to_string().into_boxed_str()));
 /// ```
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub enum PropVal {
     /// An integer value
 	Int(i64),
@@ -125,57 +111,213 @@ impl  PartialEq for Graph {
     }
 }
 
-impl ToJson for PropVal {
-	fn to_json(&self) -> Json {
-		match *self {
-			PropVal::String(ref s) => s.to_json(),
-			PropVal::Int(i) => i.to_json()
-		}
-	}
-}
-
-/// Used to convert a Node to JSON
-impl ToJson for Node {
-	fn to_json(&self) -> Json {
-		let mut d = BTreeMap::new();
-		let mut props = BTreeMap::new();
-		d.insert("id".to_string(), self.id.to_json());
-		for (k, v) in self.props.iter() {
-			props.insert(k.to_string(), v.to_json());
-		}
-		d.insert("props".to_string(), Json::Object(props));
-		Json::Object(d)
-	}
-}
-
-impl ToJson for Edge {
-	fn to_json(&self) -> Json {
-		let mut d = BTreeMap::new();
-		d.insert("labels".to_string(), Json::Array(self.labels.iter().map(|l| Json::String(l.to_string())).collect()));
-		Json::Object(d)
-	}
-}
-
+// impl ToJson for PropVal {
+// 	fn to_json(&self) -> Json {
+// 		match *self {
+// 			PropVal::String(ref s) => s.to_json(),
+// 			PropVal::Int(i) => i.to_json()
+// 		}
+// 	}
+// }
+//
+// /// Used to convert a Node to JSON
+// impl ToJson for Node {
+// 	fn to_json(&self) -> Json {
+// 		let mut d = BTreeMap::new();
+// 		let mut props = BTreeMap::new();
+// 		d.insert("id".to_string(), self.id.to_json());
+// 		for (k, v) in self.props.iter() {
+// 			props.insert(k.to_string(), v.to_json());
+// 		}
+// 		d.insert("props".to_string(), Json::Object(props));
+// 		Json::Object(d)
+// 	}
+// }
+//
+// impl ToJson for Edge {
+// 	fn to_json(&self) -> Json {
+// 		let mut d = BTreeMap::new();
+// 		d.insert("labels".to_string(), Json::Array(self.labels.iter().map(|l| Json::String(l.to_string())).collect()));
+// 		Json::Object(d)
+// 	}
+// }
 impl <'a> ToJson for Graph {
 	fn to_json(&self) -> Json {
-		let mut d = BTreeMap::new();
-		let mut edge_json_map = BTreeMap::new();
-		d.insert("nodes".to_string(), Json::Object(self.nodes.iter().map(|(i, n)| (i.to_string(), n.to_json())).collect()));
-		for (index, edge) in self.edges.iter() {
-			edge_json_map.insert(index.to_string(), Json::Object(edge.iter().map(|(i, n)| (i.to_string(), n.to_json())).collect()));
-		}
-		d.insert("edges".to_string(), Json::Object(edge_json_map));
-		Json::Object(d)
+		// let mut d = BTreeMap::new();
+		// let mut edge_json_map = BTreeMap::new();
+		// d.insert("nodes".to_string(), Json::Object(self.nodes.iter().map(|(i, n)| (i.to_string(), n.to_json())).collect()));
+		// for (index, edge) in self.edges.iter() {
+		// 	edge_json_map.insert(index.to_string(), Json::Object(edge.iter().map(|(i, n)| (i.to_string(), n.to_json())).collect()));
+		// }
+		// d.insert("edges".to_string(), Json::Object(edge_json_map));
+		// Json::Object(d)
+        Json::from_str(&json::encode(self).unwrap()).unwrap()
+    }
+}
+
+impl Encodable for PropVal {
+    fn encode<E:Encoder>(&self, encoder: &mut E) -> Result<(), E::Error> {
+
+        encoder.emit_struct("root", 2, |encoder| {
+            match *self {
+                PropVal::Int(ref val) => {
+                    try!(encoder.emit_struct_field("type", 0, |encoder| {
+                        encoder.emit_usize(0)
+                    }));
+                    encoder.emit_struct_field("value", 1, |encoder| {
+                        encoder.emit_i64(*val)
+                    })
+                },
+                PropVal::String(ref val) => {
+                    try!(encoder.emit_struct_field("type", 0, |encoder| {
+                        encoder.emit_usize(0)
+                    }));
+                    encoder.emit_struct_field("value", 1, |encoder| {
+                        encoder.emit_str(val)
+                    })
+                },
+            }
+        })
+    }
+}
+
+impl Encodable for Node {
+    fn encode<E:Encoder>(&self, encoder: &mut E) -> Result<(), E::Error> {
+        encoder.emit_struct("root", 2, |encoder| {
+            try!(encoder.emit_struct_field("id", 0, |encoder| {
+                encoder.emit_usize(self.id)
+            }));
+            encoder.emit_struct_field("props", 1, |encoder| {
+                encoder.emit_map(self.props.len(), |encoder| {
+                    for (index, (key, val)) in self.props.iter().enumerate() {
+                        try!(encoder.emit_map_elt_key(index, |encoder| {encoder.emit_str(key)}));
+                        try!(encoder.emit_map_elt_val(index, |encoder| {val.encode(encoder)}));
+                    }
+                    Ok(())
+                })
+            })
+        })
+    }
+}
+
+impl Encodable for Edge {
+    fn encode<E:Encoder>(&self, encoder: &mut E) -> Result<(), E::Error> {
+        encoder.emit_struct("root", 1, |encoder| {
+            encoder.emit_struct_field("labels", 0, |encoder| {
+                encoder.emit_seq(self.labels.len(), |encoder| {
+                    for (index, val) in self.labels.iter().enumerate() {
+                        try!(encoder.emit_seq_elt(index, |encoder| {
+                            encoder.emit_str(val)
+                        }));
+                    }
+                    Ok(())
+                })
+            })
+        })
+    }
+}
+
+impl Encodable for Graph {
+    fn encode<E:Encoder>(&self, encoder: &mut E) -> Result<(), E::Error> {
+        encoder.emit_struct("root", 2, |encoder| {
+            try!(encoder.emit_struct_field("nodes", 0, |encoder| {
+                encoder.emit_map(self.nodes.len(), |encoder| {
+                    for (index, (node_id, node)) in self.nodes.iter().enumerate() {
+                        try!(encoder.emit_map_elt_key(index, |encoder| {encoder.emit_usize(*node_id)}));
+                        try!(encoder.emit_map_elt_val(index, |encoder| {node.encode(encoder)}));
+                    }
+                    Ok(())
+                })
+            }));
+            encoder.emit_struct_field("edges", 1, |encoder| {
+                encoder.emit_map(self.edges.len(), |encoder| {
+                    for (index, (source, edge_map)) in self.edges.iter().enumerate() {
+                        try!(encoder.emit_map_elt_key(index, |encoder| {encoder.emit_usize(*source)}));
+                        try!(encoder.emit_map_elt_val(index, |encoder| {
+                            encoder.emit_map(edge_map.len(), |encoder| {
+                                for (index, (target, edge)) in edge_map.iter().enumerate() {
+                                    try!(encoder.emit_map_elt_key(index, |encoder| {encoder.emit_usize(*target)}));
+                                    try!(encoder.emit_map_elt_val(index, |encoder| {edge.encode(encoder)}));
+                                }
+                                Ok(())
+                            })
+                        }));
+                    }
+                    Ok(())
+                })
+            })
+        })
+    }
+}
+
+struct Link {
+    source: NodeIndex,
+    target: NodeIndex
+}
+
+impl<'a> Encodable for DAG<'a> {
+    fn encode<E:Encoder>(&self, encoder: &mut E) -> Result<(), E::Error> {
+        let mut node_array = Vec::new();
+        let mut link_array = Vec::new();
+        let mut id_lookup = HashMap::new();
+
+        for (index, (id, node)) in self.nodes.iter().enumerate() {
+            node_array.push(node.node);
+            id_lookup.insert(id, index);
+        }
+        for (id, node) in self.nodes.iter() {
+            let id = id_lookup.get(id).unwrap();
+            for target in node.connected_to.iter() {
+                link_array.push(Link{source: id.clone(), target: id_lookup[target].clone()})
+            }
+        }
+        encoder.emit_struct("root", 2, |encoder| {
+            try!(encoder.emit_struct_field("nodes", 0, |encoder| {
+                // encoder.emit_seq(node_array.len(), |encoder| {
+                //     for (index, node) in node_array.iter().enumerate() {
+                //         try!(encoder.emit_seq_elt(index, |encoder| {
+                //             node.encode(encoder)
+                //         }));
+                //     }
+                //     Ok(())
+                // })
+                node_array.encode(encoder)
+            }));
+            encoder.emit_struct_field("links", 1, |encoder| {
+                // encoder.emit_seq(link_array.len(), |encoder| {
+                //     for (index, link) in link_array.iter().enumerate() {
+                //         try!(encoder.emit_seq_elt(index, |encoder| {
+                //             link.encode(encoder)
+                //         }));
+                //     }
+                //     Ok(())
+                // })
+                link_array.encode(encoder)
+            })
+        })
+    }
+}
+
+impl Encodable for Link {
+    fn encode<E:Encoder>(&self, encoder: &mut E) -> Result<(), E::Error> {
+        encoder.emit_struct("root", 2, |encoder| {
+            try!(encoder.emit_struct_field("source", 0, |encoder| {
+                encoder.emit_usize(self.source)
+            }));
+            encoder.emit_struct_field("target", 1, |encoder| {
+                encoder.emit_usize(self.target)
+            })
+        })
     }
 }
 
 impl Decodable for PropVal {
     fn decode<D:Decoder>(decoder: &mut D) -> Result<Self, D::Error> {
-        decoder.read_struct("root", 0, |decoder| {
+        decoder.read_struct("root", 2, |decoder| {
             let t = try!(decoder.read_struct_field("type", 0, |decoder| {
                 decoder.read_usize()
             }));
-            decoder.read_struct_field("value", 0, |decoder| {
+            decoder.read_struct_field("value", 1, |decoder| {
                 match t {
                     0 => match decoder.read_i64() {
                         Ok(val) => Ok(PropVal::Int(val)),
@@ -194,11 +336,11 @@ impl Decodable for PropVal {
 
 impl Decodable for Node {
     fn decode<D:Decoder>(decoder: &mut D) -> Result<Self, D::Error> {
-        decoder.read_struct("root", 0, |decoder| {
+        decoder.read_struct("root", 2, |decoder| {
             let id = try!(decoder.read_struct_field("id", 0, |decoder| {
                 decoder.read_usize()
             }));
-            let props = try!(decoder.read_struct_field("props", 0, |decoder| {
+            let props = try!(decoder.read_struct_field("props", 1, |decoder| {
                 decoder.read_map(|decoder, len| {
                     let mut props:HashMap<Box<str>, PropVal> = HashMap::new();
                     for idx in 0..len {
@@ -219,7 +361,7 @@ impl Decodable for Node {
 
 impl Decodable for Edge {
     fn decode<D:Decoder>(decoder: &mut D) -> Result<Self, D::Error> {
-        decoder.read_struct("root", 0, |decoder| {
+        decoder.read_struct("root", 1, |decoder| {
             let labels = try!(decoder.read_struct_field("labels", 0, |decoder| {
                 decoder.read_seq(|decoder, len| {
                     let mut labels:HashSet<Box<str>> = HashSet::new();
@@ -240,9 +382,9 @@ impl Decodable for Edge {
 impl Decodable for Graph {
 
     fn decode<D:Decoder>(decoder: &mut D) -> Result<Self, D::Error> {
-        decoder.read_struct("root", 0, |decoder| {
+        decoder.read_struct("root", 2, |decoder| {
             let mut max_node_id = 0;
-            let nodes = try!(decoder.read_struct_field("nodes", 0, |decoder| {
+            let nodes = try!(decoder.read_struct_field("nodes", 1, |decoder| {
                 decoder.read_map(|decoder, len| {
                     let mut nodes = HashMap::new();
                     for idx in 0..len {
@@ -263,7 +405,7 @@ impl Decodable for Graph {
                 edges: HashMap::new(),
                 reverse_edges: HashMap::new()
             };
-            try!(decoder.read_struct_field("edges", 0, |decoder| {
+            try!(decoder.read_struct_field("edges", 2, |decoder| {
                 decoder.read_map(|decoder, len| {
                     for idx in 0..len {
                         let source_index = try!(decoder.read_map_elt_key(idx, |decoder| decoder.read_usize()));
@@ -283,17 +425,17 @@ impl Decodable for Graph {
     }
 }
 
-impl<'a> PartialEq<DAGNode> for DAGNode {
+impl<'a> PartialEq<DAGNode<'a>> for DAGNode<'a> {
     fn eq(&self, other: &DAGNode) -> bool {
-        self.id == other.id
+        self.node.id == other.node.id
     }
 }
 
-impl<'a> Eq for DAGNode {}
+impl<'a> Eq for DAGNode<'a> {}
 
-impl <'a> Hash for DAGNode {
+impl <'a> Hash for DAGNode<'a> {
     fn hash<H>(&self, state: &mut H) where H: Hasher {
-        self.id.hash(state)
+        self.node.id.hash(state)
     }
 }
 
@@ -556,89 +698,6 @@ impl Graph {
 			}
 	}
 
-    fn get_base_nodes(&self, node_matcher: &NodeMatcher) -> Vec<DAGNode> {
-        let mut base_nodes = Vec::new();
-        if let &NodeMatcher::Id(id) = node_matcher {
-            if self.nodes.contains_key(&id) {
-                base_nodes.push(DAGNode{
-                    id: id,
-                    connected_to: vec!{}
-                });
-            }
-        } else {
-            for base_node in self.nodes.values() {
-                if node_matcher.matches(base_node) {
-                    base_nodes.push(DAGNode{
-                        id: base_node.id,
-                        connected_to: vec!{}
-                    });
-                }
-            }
-        }
-        base_nodes
-
-    }
-
-    // fn trim_path<'a>(&self, mut graph: &mut DAG<'a>, mut branch_tail: &'a mut DAGNode<'a>) {
-    //     graph.nodes.remove(&branch_tail.id);
-    //     let id = branch_tail.id;
-    //     if let Some(ref mut parent_ref) = branch_tail.parent {
-    //         let mut parent = parent_ref.borrow_mut();
-    //         parent.connected_to.retain(|x| x.id != id);
-    //         if parent.connected_to.len() == 0 {
-    //             self.trim_path(graph, parent.deref_mut());
-    //         }
-    //
-    //     } else {
-    //         graph.roots.remove(branch_tail);
-    //     }
-    // }
-    //
-    // fn match_edge_sequence<'a, 'b, 'c, 'd>(&'a self, mut graph: &'c mut DAG<'a>, base_nodes: &'d Vec<&'a DAGNode<'a>>, mut closed_set: HashSet<NodeIndex>, labels: &'b Vec<Box<str>>, min: usize, max: usize) {
-    //     let mut new_set: Vec<& 'a DAGNode> = Vec::new();
-    //     let mut open_set = base_nodes;
-    //     for iteration in 0..max {
-    //         let mut should_continue = false;
-    //         for current in open_set {
-    //             if let Some(edge) = self.edges.get(&current.id) {
-    //                 let mut matched_one = false;
-    //                 for label in labels {
-    //                     for (&id, e) in edge.iter() {
-    //                         if !closed_set.contains(&id) {
-    //                             if e.labels.contains(label) {
-    //                                 println!("FOUND A MATCH");
-    //                                 should_continue = true;
-    //                                 let mut new_node = DAGNode {
-    //                                     id: id,
-    //                                     connected_to: Vec::new(),
-    //                                     parent: Some(RefCell::new(current))
-    //                                 };
-    //
-    //                                 closed_set.insert(id);
-    //                                 new_set.push(current);
-    //                                 let mut parent = graph.nodes.get_mut(&current.id).unwrap();
-    //                                 parent.connected_to.push(current);
-    //
-    //
-    //                             }
-    //                         }
-    //                     }
-    //                 }
-    //                 if !matched_one && iteration >= min  {
-    //                     //new_results.push(base_result);
-    //                 }
-    //             }
-    //         }
-    //         //base_paths = new_results;
-    //         if !should_continue {
-    //             break;
-    //         }
-    //         open_set = &new_set;
-    //         new_set = vec!{};
-    //     }
-    //     //base_paths
-    // }
-
     pub fn match_paths<'a>(&'a self, matcher: &MatchingAutomaton<'a>) -> MatchResult {
         let mut closed_set = HashSet::new();
         let mut open_set = VecDeque::new();
@@ -684,85 +743,9 @@ impl Graph {
             }
 
         }
-        MatchResult::new(parent_lookup, finished_nodes)
+        MatchResult::new(parent_lookup, finished_nodes, self)
     }
 
-    pub fn find<'a, 'b>(&'a self, matcher: PathMatcher) -> DAG {
-        let mut graph = DAG {
-            roots: HashSet::new(),
-            nodes: HashMap::new(),
-        };
-        // match matcher {
-        //     PathMatcher::Label(label, node) => {
-        //         let base_nodes = self.get_base_nodes(&node);
-        //         let mut open_set = Vec::new();
-        //         for node in base_nodes {
-        //             graph.nodes.insert(node.id, node);
-        //
-        //         }
-        //         for (id, node) in graph.nodes.iter() {
-        //             open_set.push(node);
-        //         }
-        //         //graph.roots.extend(&graph.nodes);
-        //         self.match_edge_sequence(&mut graph, &open_set, HashSet::new(), &vec!{label}, 1, 1);
-        //         // for base_node in base_nodes {
-        //         //     if let Some(edge) = self.edges.get(&base_node) {
-        //         //         for (&id, e) in edge.iter() {
-        //     	// 			if e.labels.contains(label) {
-        //         //                 let path = PathResult {
-        //         //                     head: PathNode {
-        //         //                         node: base_node,
-        //         //                         outgoing: Some(
-        //         //                             PathEdge {
-        //         //                                 edge: &e,
-        //         //                                 terminus: Box::new(PathNode {
-        //         //                                     node: id,
-        //         //                                     outgoing: None
-        //         //                                 })
-        //         //                             }
-        //         //                         )
-        //         //                     },
-        //         //                     length: 1
-        //         //                 };
-        //         //                 paths.push(path);
-        //     	// 			}
-        //         //         }
-        //         //     }
-        //         // }
-        //     },
-        //     PathMatcher::Labels(ref labels, ref node) => {
-        //         let base_nodes = self.get_base_nodes(node);
-        //         // for base_node in base_nodes {
-        //         //     if let Some(edge) = self.edges.get(&base_node) {
-        //         //         for label in labels {
-        //         //             for (&id, e) in edge.iter() {
-        //         // 				if e.labels.contains(label) {
-        //         //                     let path = PathResult {
-        //         //                         head: PathNode {
-        //         //                             node: base_node,
-        //         //                             outgoing: Some(
-        //         //                                 PathEdge {
-        //         //                                     edge: &e,
-        //         //                                     terminus: Box::new(PathNode {
-        //         //                                         node: id,
-        //         //                                         outgoing: None
-        //         //                                     })
-        //         //                                 }
-        //         //                             )
-        //         //                         },
-        //         //                         length: 1
-        //         //                     };
-        //         //                     paths.push(path);
-        //         // 				}
-        //         //             }
-        //         //         }
-        //         //     }
-        //         // }
-        //     }
-        //     _ => {}
-        // }
-        graph
-    }
 
 	pub fn path_from(&self, source: NodeIndex, edge_predicate: &Fn(&str) -> bool, end_predicate: &Fn(NodeIndex) -> bool) -> Option<Path> {
 		let mut open_set = LinkedList::new();
@@ -819,6 +802,7 @@ mod tests {
             }
          };
     );
+
     #[test]
     fn adding_nodes() {
         let mut g = Graph::new();
@@ -1003,11 +987,6 @@ mod tests {
 		}
 
 	}
-    #[test]
-    fn test_find() {
-        let g = Graph::read_from_file("data/langs.graph".to_string());
-//        assert!(g.find(node_with_id(7).connected_by_label("influenced")).len() == 9);
-    }
 
     #[test]
     fn test_matching() {
@@ -1015,6 +994,5 @@ mod tests {
         let matcher = node_with_id(7).connected_by_label("influenced").to(NodeMatcher::Any);
         let result = g.match_paths(&MatchingAutomaton::from_path_matcher(&matcher));
         println!("{:?}", result.to_dag());
-        panic!();
     }
 }

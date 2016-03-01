@@ -2,8 +2,9 @@ use std::cell::Cell;
 use std::fmt;
 use std::cmp;
 use std::collections::{HashMap, HashSet, VecDeque};
-use super::{NodeMatcher, PathMatcher};
+use super::{NodeMatcher, PathMatcher, EdgeMatcher};
 use ::{Node, Edge};
+use queries::{ASTPath, ASTEdge};
 
 #[derive(PartialEq)]
 /// An automata that can match paths in a graph.
@@ -16,8 +17,8 @@ pub type State = usize;
 
 #[derive(PartialEq, Debug, Eq, Ord, Clone)]
 enum Transition<'a> {
-    NodeTransition(&'a NodeMatcher, State),
-    EdgeTransition(&'a Box<str>, State),
+    NodeTransition(NodeMatcher, State),
+    EdgeTransition(EdgeMatcher<'a>, State),
     EpsilonTransition(State), // allows moving to the next state without consuming any input
 }
 
@@ -123,9 +124,9 @@ impl<'a> MatchingAutomaton<'a> {
         }
         for transition in self.transitions.get(state).unwrap() {
             match *transition {
-                Transition::EdgeTransition(label_match, new_state) => {
-                    if edge.labels.contains(label_match) {
-                        return Some(new_state)
+                Transition::EdgeTransition(ref label_match, ref new_state) => {
+                    if label_match.matches(&edge.labels) {
+                        return Some(*new_state)
                     }
                 },
                 Transition::EpsilonTransition(new_state) => {
@@ -143,6 +144,33 @@ impl<'a> MatchingAutomaton<'a> {
         return state == self.final_state
     }
 
+    pub fn from_path_expression(path: ASTPath<'a>) -> MatchingAutomaton<'a> {
+        let mut transitions = vec![Vec::new()];
+        let factory = StateGenerator::new();
+        let starting_state = factory.next_state();
+        let final_state = MatchingAutomaton::process_path_expression(path, &factory, starting_state, starting_state, &mut transitions);
+        MatchingAutomaton{transitions:transitions, final_state: final_state}
+    }
+
+    fn process_path_expression(path: ASTPath<'a>, factory: &StateGenerator, starting_state: State, final_state: State, transitions: &mut Vec<Vec<Transition<'a>>>) -> State {
+        let head_state = factory.next_state();
+        transitions[starting_state].push(Transition::NodeTransition(path.head, head_state));
+        transitions.push(Vec::new());
+        let mut trailing_state = head_state;
+        for &(ref edge, ref node) in path.tail.iter() {
+            let edge_state = factory.next_state();
+            let node_state = factory.next_state();
+            match *edge {
+                ASTEdge::LabelList(ref labels) => transitions[trailing_state].push(Transition::EdgeTransition(EdgeMatcher::LabelList(labels.clone()), edge_state)),
+                ASTEdge::Any => transitions[trailing_state].push(Transition::EdgeTransition(EdgeMatcher::Any, edge_state))
+            }
+            transitions.push(vec![Transition::NodeTransition(node.clone(), node_state)]);
+            transitions.push(Vec::new());
+            trailing_state = node_state;
+        }
+        trailing_state
+    }
+
     /// Create a MatchingAutomaton that accepts exactly the paths described by `matcher`.
     pub fn from_path_matcher(matcher: &'a PathMatcher) -> MatchingAutomaton<'a> {
         let mut transitions = vec![Vec::new()];
@@ -153,10 +181,10 @@ impl<'a> MatchingAutomaton<'a> {
 
     }
 
-    fn process_path_matcher(matcher: &'a PathMatcher, factory: &StateGenerator, starting_state: State, final_state: State, transitions: &mut Vec<Vec<Transition<'a>>>) -> State {
+    fn process_path_matcher(matcher: &'a PathMatcher<'a>, factory: &StateGenerator, starting_state: State, final_state: State, transitions: &mut Vec<Vec<Transition<'a>>>) -> State {
         match *matcher {
             PathMatcher::Labels(ref labels, ref node) => {
-                MatchingAutomaton::from_node_and_labels(factory, starting_state, node, labels, transitions)
+                MatchingAutomaton::from_node_and_labels(factory, starting_state, node.clone(), labels.clone(), transitions)
             },
             PathMatcher::Repeat(miniumum, maximum, ref child_matcher) => {
                 let tail_state = MatchingAutomaton::process_path_matcher(child_matcher, factory, starting_state, final_state, transitions);
@@ -164,11 +192,11 @@ impl<'a> MatchingAutomaton<'a> {
             },
             PathMatcher::ThenLabels(ref labels, ref child_matcher) => {
                 let tail_state = MatchingAutomaton::process_path_matcher(child_matcher, factory, starting_state, final_state, transitions);
-                MatchingAutomaton::from_labels(factory, tail_state, labels, transitions)
+                MatchingAutomaton::from_labels(factory, tail_state, labels.clone(), transitions)
             },
             PathMatcher::To(ref node, ref child_matcher) => {
                 let tail_state = MatchingAutomaton::process_path_matcher(child_matcher, factory, starting_state, final_state, transitions);
-                MatchingAutomaton::from_node(factory, tail_state, node, transitions)
+                MatchingAutomaton::from_node(factory, tail_state, node.clone(), transitions)
             },
             PathMatcher::Or(ref option1, ref option2) => {
                 MatchingAutomaton::from_or(factory, starting_state, final_state, option1, option2, transitions)
@@ -176,25 +204,23 @@ impl<'a> MatchingAutomaton<'a> {
         }
     }
 
-    fn from_node_and_labels(factory: &StateGenerator, starting_state: State, node: &'a NodeMatcher, labels: &'a Vec<Box<str>>, transitions: &mut Vec<Vec<Transition<'a>>>) -> State {
+    fn from_node_and_labels(factory: &StateGenerator, starting_state: State, node: NodeMatcher, labels: Vec<&'a str>, transitions: &mut Vec<Vec<Transition<'a>>>) -> State {
         let node_state = factory.next_state();
         let final_state = factory.next_state();
         transitions[starting_state].push(Transition::NodeTransition(node, node_state));
-        let label_transitions = labels.iter().map(|label| Transition::EdgeTransition(label, final_state)).collect();
-        transitions.push(label_transitions);
+        transitions.push(vec![Transition::EdgeTransition(EdgeMatcher::LabelList(labels), final_state)]);
         transitions.push(Vec::new());
         final_state
     }
 
-    fn from_labels(factory: &StateGenerator, starting_state: State, labels: &'a Vec<Box<str>>, transitions: &mut Vec<Vec<Transition<'a>>>) -> State {
+    fn from_labels(factory: &StateGenerator, starting_state: State, labels: Vec<&'a str>, transitions: &mut Vec<Vec<Transition<'a>>>) -> State {
         let final_state = factory.next_state();
-        let label_transitions = labels.iter().map(|label| Transition::EdgeTransition(label, final_state));
-        transitions[starting_state].extend(label_transitions);
+        transitions[starting_state].push(Transition::EdgeTransition(EdgeMatcher::LabelList(labels), final_state));
         transitions.push(Vec::new());
         final_state
     }
 
-    fn from_node(factory: &StateGenerator, starting_state: State, node: &'a NodeMatcher, transitions: &mut Vec<Vec<Transition<'a>>>) -> State {
+    fn from_node(factory: &StateGenerator, starting_state: State, node: NodeMatcher, transitions: &mut Vec<Vec<Transition<'a>>>) -> State {
         let final_state = factory.next_state();
         transitions[starting_state].push(Transition::NodeTransition(node, final_state));
         transitions.push(Vec::new());
@@ -265,11 +291,11 @@ impl<'a> MatchingAutomaton<'a> {
                 let new_transitions = transitions[*state].iter().map(|transition| {
                     println!("{:?}", transition);
                     match transition {
-                        &Transition::NodeTransition(node, ref new_state) => {
-                            Transition::NodeTransition(node, state_lookup[new_state])
+                        &Transition::NodeTransition(ref node, ref new_state) => {
+                            Transition::NodeTransition(node.clone(), state_lookup[new_state])
                         },
-                        &Transition::EdgeTransition(edge, ref new_state) => {
-                            Transition::EdgeTransition(edge, state_lookup[new_state])
+                        &Transition::EdgeTransition(ref edge, ref new_state) => {
+                            Transition::EdgeTransition(edge.clone(), state_lookup[new_state])
                         },
                         &Transition::EpsilonTransition(ref new_state) => {
                             Transition::EpsilonTransition(state_lookup[new_state])
@@ -335,11 +361,11 @@ impl<'a> MatchingAutomaton<'a> {
             sorted_transitions.sort();
             let my_transitions = sorted_transitions.iter().map(|transition| {
                 match transition {
-                    &Transition::NodeTransition(node, ref old_state) => {
-                        Transition::NodeTransition(node, old_to_new[old_state])
+                    &Transition::NodeTransition(ref node, ref old_state) => {
+                        Transition::NodeTransition(node.clone(), old_to_new[old_state])
                     },
-                    &Transition::EdgeTransition(edge, ref old_state) => {
-                        Transition::EdgeTransition(edge, old_to_new[old_state])
+                    &Transition::EdgeTransition(ref edge, ref old_state) => {
+                        Transition::EdgeTransition(edge.clone(), old_to_new[old_state])
                     },
                     &Transition::EpsilonTransition(ref old_state) => {
                         Transition::EpsilonTransition(old_to_new[old_state])
@@ -373,17 +399,21 @@ impl StateGenerator {
 #[cfg(test)]
 mod tests {
     use super::{MatchingAutomaton, Transition};
-    use super::super::{node_with_prop, node_with_id, NodeMatcher, PathMatcher, ANY};
+    use super::super::{node_with_prop, node_with_id, NodeMatcher, PathMatcher, EdgeMatcher, ANY};
+
+    macro_rules! make_matcher {
+        ($e:expr) => (EdgeMatcher::LabelList(vec![$e]));
+    }
 
     #[test]
     fn test_node_label_match() {
         let path_matcher = node_with_id(6).connected_by_label("label1");
         let automaton = MatchingAutomaton::from_path_matcher(&path_matcher);
         let expected_node = node_with_id(6);
-        let expected_label = "label1".to_string().into_boxed_str();
+        let expected_label = make_matcher!("label1");
         let expected_transitions = vec![
-            vec![Transition::NodeTransition(&expected_node, 1)],
-            vec![Transition::EdgeTransition(&expected_label, 2)],
+            vec![Transition::NodeTransition(expected_node, 1)],
+            vec![Transition::EdgeTransition(expected_label, 2)],
             vec![]
         ];
         assert!(MatchingAutomaton{
@@ -394,16 +424,14 @@ mod tests {
 
     #[test]
     fn test_node_multiple_label_match() {
-        let expected_label1 = "label1".to_string().into_boxed_str();
-        let expected_label2 = "label2".to_string().into_boxed_str();
-        let expected_label3 = "label3".to_string().into_boxed_str();
-        let path_matcher = node_with_id(6).connected_by_one_of(vec![expected_label1.clone(), expected_label2.clone(), expected_label3.clone()]);
+        let edge_matcher = EdgeMatcher::LabelList(vec!["label1", "label2", "label3"]);
+        let path_matcher = node_with_id(6).connected_by_one_of(vec!["label1", "label2", "label3"]);
         let automaton = MatchingAutomaton::from_path_matcher(&path_matcher);
         let expected_node = node_with_id(6);
 
         let expected_transitions = vec![
-            vec![Transition::NodeTransition(&expected_node, 1)],
-            vec![Transition::EdgeTransition(&expected_label1, 2), Transition::EdgeTransition(&expected_label2, 2), Transition::EdgeTransition(&expected_label3, 2)],
+            vec![Transition::NodeTransition(expected_node, 1)],
+            vec![Transition::EdgeTransition(edge_matcher, 2)],
             vec![]
         ];
         assert!(MatchingAutomaton{
@@ -414,17 +442,17 @@ mod tests {
 
     #[test]
     fn test_node_then_labels() {
-        let expected_label1 = "label1".to_string().into_boxed_str();
-        let expected_label2 = "label2".to_string().into_boxed_str();
+        let expected_label1 = make_matcher!("label1");
+        let expected_label2 = make_matcher!("label2");
         let path_matcher = node_with_id(6).connected_by_label("label1").to(NodeMatcher::Any).then_label("label2");
         let automaton = MatchingAutomaton::from_path_matcher(&path_matcher);
         let expected_node = node_with_id(6);
 
         let expected_transitions = vec![
-            vec![Transition::NodeTransition(&expected_node, 1)],
-            vec![Transition::EdgeTransition(&expected_label1, 2)],
-            vec![Transition::NodeTransition(&ANY, 3)],
-            vec![Transition::EdgeTransition(&expected_label2, 4)],
+            vec![Transition::NodeTransition(expected_node, 1)],
+            vec![Transition::EdgeTransition(expected_label1, 2)],
+            vec![Transition::NodeTransition(NodeMatcher::Any, 3)],
+            vec![Transition::EdgeTransition(expected_label2, 4)],
             vec![]
         ];
         assert!(MatchingAutomaton{
@@ -435,22 +463,22 @@ mod tests {
 
     #[test]
     fn test_node_then_labels_repeat() {
-        let expected_label1 = "label1".to_string().into_boxed_str();
-        let expected_label2 = "label2".to_string().into_boxed_str();
+        let expected_label1 = make_matcher!("label1");
+        let expected_label2 = make_matcher!("label2");
         let path_matcher = node_with_id(6).connected_by_label("label1").to(NodeMatcher::Any).then_label("label2").repeat(Some(2), None);
         let automaton = MatchingAutomaton::from_path_matcher(&path_matcher);
         let expected_node = node_with_id(6);
         println!("Automaton: {:?}", automaton);
         println!("Cannonical Automaton: {:?}", automaton.to_cannonical());
         let expected_transitions = vec![
-            vec![Transition::NodeTransition(&expected_node, 1)],
-            vec![Transition::EdgeTransition(&expected_label1, 2)],
-            vec![Transition::NodeTransition(&ANY, 3)],
-            vec![Transition::EdgeTransition(&expected_label2, 4)],
-            vec![Transition::NodeTransition(&expected_node, 5)],
-            vec![Transition::EdgeTransition(&expected_label1, 6)],
-            vec![Transition::NodeTransition(&ANY, 7)],
-            vec![Transition::EdgeTransition(&expected_label2, 8)],
+            vec![Transition::NodeTransition(expected_node.clone(), 1)],
+            vec![Transition::EdgeTransition(expected_label1.clone(), 2)],
+            vec![Transition::NodeTransition(NodeMatcher::Any, 3)],
+            vec![Transition::EdgeTransition(expected_label2.clone(), 4)],
+            vec![Transition::NodeTransition(expected_node.clone(), 5)],
+            vec![Transition::EdgeTransition(expected_label1.clone(), 6)],
+            vec![Transition::NodeTransition(NodeMatcher::Any, 7)],
+            vec![Transition::EdgeTransition(expected_label2.clone(), 8)],
             vec![Transition::EpsilonTransition(4)]
         ];
         assert!(MatchingAutomaton{
@@ -466,17 +494,17 @@ mod tests {
         println!("Automaton: {:?}", automaton);
         println!("Cannonical Automaton: {:?}", automaton.to_cannonical());
         let expected_node = node_with_id(6);
-        let expected_label = "label1".to_string().into_boxed_str();
+        let expected_label =make_matcher!("label1");
         let expected_transitions = vec![
-            vec![Transition::NodeTransition(&expected_node, 1), Transition::EpsilonTransition(2)],
-            vec![Transition::EdgeTransition(&expected_label, 3)],
+            vec![Transition::NodeTransition(expected_node.clone(), 1), Transition::EpsilonTransition(2)],
+            vec![Transition::EdgeTransition(expected_label.clone(), 3)],
             vec![],
-            vec![Transition::NodeTransition(&expected_node, 4), Transition::EpsilonTransition(2)],
-            vec![Transition::EdgeTransition(&expected_label, 5)],
-            vec![Transition::NodeTransition(&expected_node, 6), Transition::EpsilonTransition(2)],
-            vec![Transition::EdgeTransition(&expected_label, 7)],
-            vec![Transition::NodeTransition(&expected_node, 8), Transition::EpsilonTransition(2)],
-            vec![Transition::EdgeTransition(&expected_label, 2)]
+            vec![Transition::NodeTransition(expected_node.clone(), 4), Transition::EpsilonTransition(2)],
+            vec![Transition::EdgeTransition(expected_label.clone(), 5)],
+            vec![Transition::NodeTransition(expected_node.clone(), 6), Transition::EpsilonTransition(2)],
+            vec![Transition::EdgeTransition(expected_label.clone(), 7)],
+            vec![Transition::NodeTransition(expected_node.clone(), 8), Transition::EpsilonTransition(2)],
+            vec![Transition::EdgeTransition(expected_label.clone(), 2)]
 
         ];
 
@@ -495,14 +523,14 @@ mod tests {
         println!("Automaton: {:?}", automaton);
         println!("Cannonical Automaton: {:?}", automaton.to_cannonical());
         let expected_node1 = node_with_id(6);
-        let expected_label1 = "label1".to_string().into_boxed_str();
+        let expected_label1 = make_matcher!("label1");
         let expected_node2 = node_with_id(5);
-        let expected_label2 = "label2".to_string().into_boxed_str();
+        let expected_label2 = make_matcher!("label2");
 
         let expected_transitions = vec![
-            vec![Transition::NodeTransition(&expected_node2, 1), Transition::NodeTransition(&expected_node1, 2)],
-            vec![Transition::EdgeTransition(&expected_label2, 3)],
-            vec![Transition::EdgeTransition(&expected_label1, 4)],
+            vec![Transition::NodeTransition(expected_node2, 1), Transition::NodeTransition(expected_node1, 2)],
+            vec![Transition::EdgeTransition(expected_label2, 3)],
+            vec![Transition::EdgeTransition(expected_label1, 4)],
             vec![],
             vec![Transition::EpsilonTransition(3)],
 

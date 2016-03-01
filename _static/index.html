@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<style>
+
+.node {
+  stroke: #fff;
+  stroke-width: 1.5px;
+}
+
+.link {
+  stroke: #999;
+  stroke-opacity: .6;
+}
+
+</style>
+<body>
+  <div class="header"><h1>Graphael Web Interface</h1></div>
+  <div class="query_box">
+    <div>
+  <input id="query" type="text" placeholder="()->()" /><input id="do_query" type=button value="Go"/>
+</div>
+<div id="error" style="color:red;"></div>
+</div>
+  <div class="results"><svg></svg></div>
+<script src="//d3js.org/d3.v3.js"></script>
+<script>
+
+var width = 960,
+    height = 500;
+
+var color = d3.scale.category20();
+
+var force = d3.layout.force()
+    .charge(-320)
+    .linkDistance(100)
+    .size([width, height]);
+
+var svg = d3.select("svg")
+    .attr("width", width)
+    .attr("height", height);
+function do_query(query) {
+  document.getElementById('error').innerHTML = "";
+  d3.json("/query?q="+query, function(error, graph) {
+    if (error) {
+      document.getElementById('error').innerHTML = error;
+      return;
+    }
+
+    //var graph = process_graph(graph);
+
+    force
+        .nodes(graph.nodes)
+        .links(graph.links)
+        .start();
+  
+    svg.selectAll('*').remove();
+    var link = svg.selectAll(".link")
+        .data(graph.links)
+      .enter().append("line")
+        .attr("class", "link");
+
+    var node = svg.selectAll(".node")
+        .data(graph.nodes)
+      .enter().append("circle")
+        .attr("class", "node")
+        .attr("r", 20)
+        .style("fill", function(d) { return color(1); })
+        .call(force.drag);
+
+    node.append("title")
+        .text(function(d) { return d.props.name.value; });
+
+
+    var text = svg.selectAll(".text")
+    .data(graph.nodes)
+    .enter().append("text")
+    .attr("class", "text")
+    .text(function(d) {return d.props.name.value});
+  force.on("tick", function() {
+    link.attr("x1", function(d) { return d.source.x; })
+        .attr("y1", function(d) { return d.source.y; })
+        .attr("x2", function(d) { return d.target.x; })
+        .attr("y2", function(d) { return d.target.y; });
+
+    node.attr("cx", function(d) { return d.x; })
+        .attr("cy", function(d) { return d.y; });
+
+    text.attr("x", function(d) { return d.x; })
+        .attr("y", function(d) { return d.y; });
+  });
+});}
+
+document.getElementById('do_query').addEventListener("click", function () {
+  var query_text = document.getElementById('query').value;
+  do_query(query_text);
+});
+
+document.getElementById('query').addEventListener("keydown", function(e) {
+  if (e.keyCode == 13) {
+    document.getElementById('do_query').click();
+  }
+})
+
+</script>
+</body>
+</html>

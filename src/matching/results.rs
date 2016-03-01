@@ -1,17 +1,19 @@
 use std::collections::{HashMap, HashSet};
 use super::automata::State;
-use ::{NodeIndex, Edge, DAG, DAGNode};
+use ::{NodeIndex, Edge, DAG, DAGNode, Graph};
 
 pub struct MatchResult<'a> {
     parent_lookup: HashMap<NodeIndex, Vec<(NodeIndex, &'a Edge)>>,
-    finished_nodes: HashSet<NodeIndex>
+    finished_nodes: HashSet<NodeIndex>,
+    ref_graph: &'a Graph
 }
 
 impl<'a> MatchResult<'a> {
-    pub fn new(parent_lookup: HashMap<NodeIndex, Vec<(NodeIndex, &'a Edge)>>, finished_nodes: HashSet<State>) -> MatchResult<'a> {
+    pub fn new(parent_lookup: HashMap<NodeIndex, Vec<(NodeIndex, &'a Edge)>>, finished_nodes: HashSet<State>, graph: &'a Graph) -> MatchResult<'a> {
         MatchResult {
             parent_lookup: parent_lookup,
-            finished_nodes: finished_nodes
+            finished_nodes: finished_nodes,
+            ref_graph: graph
         }
     }
 
@@ -27,9 +29,9 @@ impl<'a> MatchResult<'a> {
         }
     }
 
-    fn add_node_rec(&self, node: NodeIndex, child: Option<NodeIndex>, nodes: &mut HashMap<NodeIndex, DAGNode>, roots: &mut HashSet<NodeIndex>) {
+    fn add_node_rec(&self, node: NodeIndex, child: Option<NodeIndex>, nodes: &mut HashMap<NodeIndex, DAGNode<'a>>, roots: &mut HashSet<NodeIndex>) {
         {
-            let mut dag_node = nodes.entry(node).or_insert(DAGNode{id: node, connected_to: Vec::new()});
+            let mut dag_node = nodes.entry(node).or_insert(DAGNode{node: self.ref_graph.get_node(node).unwrap(), connected_to: Vec::new()});
             if let Some(child) = child {
                 if !dag_node.connected_to.contains(&child) {
                     dag_node.connected_to.push(child);
