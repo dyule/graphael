@@ -1,5 +1,8 @@
 <!DOCTYPE html>
+<html>
+<head>
 <meta charset="utf-8">
+<title>Graphael Web Interface</title>
 <style>
 
 .node {
@@ -12,11 +15,17 @@
   stroke-opacity: .6;
 }
 
+#query {
+  width: 500px;
+}
+
 </style>
+</head>
 <body>
   <div class="header"><h1>Graphael Web Interface</h1></div>
   <div class="query_box">
     <div>
+      <label for="query">Pattern Query</label>
   <input id="query" type="text" placeholder="()->()" /><input id="do_query" type=button value="Go"/>
 </div>
 <div id="error" style="color:red;"></div>
@@ -40,7 +49,7 @@ var svg = d3.select("svg")
     .attr("height", height);
 function do_query(query) {
   document.getElementById('error').innerHTML = "";
-  d3.json("/query?q="+query, function(error, graph) {
+  d3.json("/query?q="+encodeURIComponent(query), function(error, graph) {
     if (error) {
       document.getElementById('error').innerHTML = error;
       return;
@@ -52,7 +61,7 @@ function do_query(query) {
         .nodes(graph.nodes)
         .links(graph.links)
         .start();
-  
+
     svg.selectAll('*').remove();
     var link = svg.selectAll(".link")
         .data(graph.links)
