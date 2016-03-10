@@ -8,7 +8,7 @@ pub enum ASTNode<'a> {
     NodePropsList(Vec<ASTNode<'a>>),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ASTEdge<'a> {
     LabelList(Vec<&'a str>),
     Any
@@ -17,5 +17,29 @@ pub enum ASTEdge<'a> {
 #[derive(Debug, PartialEq)]
 pub struct ASTPath<'a> {
     pub head: NodeMatcher,
-    pub tail: Vec<(ASTEdge<'a>, NodeMatcher)>
+    pub tail: EdgeToNode<'a>
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum EdgeToNode<'a> {
+    Standard {
+        edge: ASTEdge<'a>,
+        node: NodeMatcher,
+        tail: Option<Box<EdgeToNode<'a>>>
+    },
+    Repeated {
+        tail: Option<Box<EdgeToNode<'a>>>,
+        repeated: Box<EdgeToNode<'a>>,
+        min: u32,
+        max: Option<u32>
+    }
+}
+
+impl<'a> EdgeToNode<'a> {
+    pub fn get_tail(&mut self) -> & mut Option<Box<EdgeToNode<'a>>> {
+        match self {
+            &mut EdgeToNode::Standard {ref mut tail, ..} => tail,
+            &mut EdgeToNode::Repeated {ref mut tail, ..} => tail
+        }
+    }
 }

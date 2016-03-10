@@ -425,6 +425,13 @@ impl Decodable for Graph {
     }
 }
 
+impl Node {
+    #[inline]
+    pub fn get_id(&self) -> NodeIndex {
+        self.id
+    }
+}
+
 impl<'a> PartialEq<DAGNode<'a>> for DAGNode<'a> {
     fn eq(&self, other: &DAGNode) -> bool {
         self.node.id == other.node.id

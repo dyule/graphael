@@ -4,13 +4,13 @@ use std::cmp;
 use std::collections::{HashMap, HashSet, VecDeque};
 use super::{NodeMatcher, PathMatcher, EdgeMatcher};
 use ::{Node, Edge};
-use queries::{ASTPath, ASTEdge};
+use queries::{ASTPath, ASTEdge, EdgeToNode};
 
 #[derive(PartialEq)]
 /// An automata that can match paths in a graph.
 pub struct MatchingAutomaton<'a> {
     transitions: Vec<Vec<Transition<'a>>>,
-    final_state: State
+    final_states: HashSet<State>
 }
 
 pub type State = usize;
@@ -30,9 +30,13 @@ struct StateGenerator {
 
 impl<'a> fmt::Debug for MatchingAutomaton<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "{{");
+        try!(writeln!(f, "{{"));
         for (state, transition) in self.transitions.iter().enumerate() {
-            writeln!(f, "  {}: {:?}", state, transition);
+            if self.final_states.contains(&state) {
+                try!(writeln!(f, " *{}: {:?}", state, transition));
+            } else {
+                try!(writeln!(f, "  {}: {:?}", state, transition));
+            }
         }
         writeln!(f, "}}")
     }
@@ -141,34 +145,60 @@ impl<'a> MatchingAutomaton<'a> {
     }
 
     pub fn is_complete(&self, state: State) -> bool {
-        return state == self.final_state
+        return self.final_states.contains(&state);
     }
 
     pub fn from_path_expression(path: ASTPath<'a>) -> MatchingAutomaton<'a> {
         let mut transitions = vec![Vec::new()];
         let factory = StateGenerator::new();
         let starting_state = factory.next_state();
-        let final_state = MatchingAutomaton::process_path_expression(path, &factory, starting_state, starting_state, &mut transitions);
-        MatchingAutomaton{transitions:transitions, final_state: final_state}
+        let final_state = MatchingAutomaton::process_path_expression(path, &factory, starting_state, &mut transitions);
+        let final_states = MatchingAutomaton::find_final_states(final_state, &transitions);
+        MatchingAutomaton{transitions:transitions, final_states: final_states}
     }
 
-    fn process_path_expression(path: ASTPath<'a>, factory: &StateGenerator, starting_state: State, final_state: State, transitions: &mut Vec<Vec<Transition<'a>>>) -> State {
+    fn process_path_expression(path: ASTPath<'a>, factory: &StateGenerator, starting_state: State, transitions: &mut Vec<Vec<Transition<'a>>>) -> State {
         let head_state = factory.next_state();
         transitions[starting_state].push(Transition::NodeTransition(path.head, head_state));
         transitions.push(Vec::new());
-        let mut trailing_state = head_state;
-        for &(ref edge, ref node) in path.tail.iter() {
-            let edge_state = factory.next_state();
-            let node_state = factory.next_state();
-            match *edge {
-                ASTEdge::LabelList(ref labels) => transitions[trailing_state].push(Transition::EdgeTransition(EdgeMatcher::LabelList(labels.clone()), edge_state)),
-                ASTEdge::Any => transitions[trailing_state].push(Transition::EdgeTransition(EdgeMatcher::Any, edge_state))
+        MatchingAutomaton::process_edge_to_node(path.tail, factory, head_state, transitions)
+    }
+
+    fn process_edge_to_node(e2n: EdgeToNode<'a>, factory: &StateGenerator, starting_state: State,  transitions: &mut Vec<Vec<Transition<'a>>>) -> State {
+        match e2n {
+            EdgeToNode::Standard {
+                node,
+                edge,
+                tail,
+            } => {
+                let edge_state = factory.next_state();
+                let node_state = factory.next_state();
+                let edge_transition = match edge {
+                    ASTEdge::LabelList(ref labels) => Transition::EdgeTransition(EdgeMatcher::LabelList(labels.clone()), edge_state),
+                    ASTEdge::Any => Transition::EdgeTransition(EdgeMatcher::Any, edge_state)
+                };
+                transitions[starting_state].push(edge_transition);
+                transitions.push(vec![Transition::NodeTransition(node.clone(), node_state)]);
+                transitions.push(Vec::new());
+                match tail {
+                    Some(tail) => MatchingAutomaton::process_edge_to_node(*tail, factory, node_state, transitions),
+                    None => node_state
+                }
+            },
+            EdgeToNode::Repeated {
+                min,
+                max,
+                repeated,
+                tail
+            } => {
+                let tail_repeated_state = MatchingAutomaton::process_edge_to_node(*repeated, factory, starting_state, transitions);
+                let tail_state = MatchingAutomaton::repeat(factory, starting_state, tail_repeated_state, Some(min), max, transitions);
+                match tail {
+                    Some(tail) => MatchingAutomaton::process_edge_to_node(*tail, factory, tail_state, transitions),
+                    None => tail_state
+                }
             }
-            transitions.push(vec![Transition::NodeTransition(node.clone(), node_state)]);
-            transitions.push(Vec::new());
-            trailing_state = node_state;
         }
-        trailing_state
     }
 
     /// Create a MatchingAutomaton that accepts exactly the paths described by `matcher`.
@@ -177,7 +207,8 @@ impl<'a> MatchingAutomaton<'a> {
         let factory = StateGenerator::new();
         let start_state = factory.next_state();
         let final_state = MatchingAutomaton::process_path_matcher(matcher, &factory, start_state, start_state, &mut transitions);
-        MatchingAutomaton{transitions:transitions, final_state: final_state}
+        let final_states = MatchingAutomaton::find_final_states(final_state, &transitions);
+        MatchingAutomaton{transitions:transitions, final_states: final_states}
 
     }
 
@@ -251,7 +282,8 @@ impl<'a> MatchingAutomaton<'a> {
         }
         if let Some(maximum) = maximum {
             let mut skippable_starts = Vec::new();
-            for _ in minimum + 1..maximum {
+            let lower_bound = if minimum == 0 {1} else {minimum};
+            for _ in lower_bound..maximum {
                 let new_states = MatchingAutomaton::duplicate_states(factory, &the_states, &starting_state, &final_state, &tail_state, transitions);
                 skippable_starts.push(tail_state);
                 tail_state = new_states.get(&final_state).unwrap().clone();
@@ -315,6 +347,29 @@ impl<'a> MatchingAutomaton<'a> {
         state_lookup
     }
 
+    fn find_final_states(final_state: State, transitions: &Vec<Vec<Transition<'a>>>) -> HashSet<State> {
+        let mut final_states = HashSet::new();
+        final_states.insert(final_state);
+        let mut found = true;
+        while found {
+            found = false;
+            for (state, state_transitions) in transitions.iter().enumerate() {
+                if !final_states.contains(&state) {
+                    for transition in state_transitions.iter() {
+                        if let &Transition::EpsilonTransition(new_state) = transition {
+                            if final_states.contains(&new_state) {
+                                final_states.insert(state);
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        final_states
+    }
+
     /// Converts the automata to a cannonical form.  Any two isomorphic automata are guaranteed
     /// to have the same cannonical form, and thus they can be compared.  Does not consume
     /// the automata.
@@ -374,9 +429,13 @@ impl<'a> MatchingAutomaton<'a> {
             }).collect();
             new_transitions.push(my_transitions);
         }
+        let mut new_finals = HashSet::new();
+        for old_state in self.final_states.iter() {
+            new_finals.insert(old_to_new[old_state]);
+        }
         MatchingAutomaton {
             transitions: new_transitions,
-            final_state: old_to_new[&self.final_state].clone()
+            final_states: new_finals
         }
     }
 
@@ -399,10 +458,18 @@ impl StateGenerator {
 #[cfg(test)]
 mod tests {
     use super::{MatchingAutomaton, Transition};
-    use super::super::{node_with_prop, node_with_id, NodeMatcher, PathMatcher, EdgeMatcher, ANY};
+    use super::super::{node_with_id, NodeMatcher, PathMatcher, EdgeMatcher};
+    use std::collections::HashSet;
+    use std::iter::FromIterator;
 
     macro_rules! make_matcher {
         ($e:expr) => (EdgeMatcher::LabelList(vec![$e]));
+    }
+
+    macro_rules! final_set {
+        ($( $x:expr), *) => {
+            HashSet::from_iter(vec![$( $x ,)*])
+        };
     }
 
     #[test]
@@ -418,7 +485,7 @@ mod tests {
         ];
         assert!(MatchingAutomaton{
             transitions: expected_transitions,
-            final_state: 2
+            final_states: final_set!(2)
         } == automaton)
     }
 
@@ -436,7 +503,7 @@ mod tests {
         ];
         assert!(MatchingAutomaton{
             transitions: expected_transitions,
-            final_state: 2
+            final_states: final_set!(2)
         } == automaton)
     }
 
@@ -457,7 +524,7 @@ mod tests {
         ];
         assert!(MatchingAutomaton{
             transitions: expected_transitions,
-            final_state: 4
+            final_states: final_set!(4)
         } == automaton)
     }
 
@@ -483,7 +550,7 @@ mod tests {
         ];
         assert!(MatchingAutomaton{
             transitions: expected_transitions,
-            final_state: 8
+            final_states: final_set!(8)
         } == automaton.to_cannonical())
     }
 
@@ -510,7 +577,7 @@ mod tests {
 
         assert!(MatchingAutomaton{
             transitions: expected_transitions,
-            final_state: 2,
+            final_states: final_set!(0, 2, 3, 5, 7)
         } == automaton.to_cannonical())
     }
 
@@ -538,7 +605,7 @@ mod tests {
 
         assert!(MatchingAutomaton{
             transitions: expected_transitions,
-            final_state: 3
+            final_states: final_set!(3, 4)
         } == automaton.to_cannonical())
     }
 }

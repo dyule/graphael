@@ -124,7 +124,7 @@ impl<'a> PathMatcher<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{node_with_prop, node_with_id};
+    use super::{node_with_prop};
     use ::{PropVal, Graph};
     macro_rules! dict (
     	{ $($key:expr => $value:expr),+ } => {
