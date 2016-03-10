@@ -14,8 +14,6 @@ fn is_alphanumeric(c: char) -> bool {
     c.is_alphanumeric()
 }
 
-
-
 named!(node_expression<&str, NodeMatcher >, delimited!(
     tag_s!("("),
     chain!(
@@ -242,7 +240,10 @@ pub fn parse_expression(expression: &str) -> Result<ASTPath, ParseError> {
                 Err(ParseError::Problem)
             }
         },
-        _ => {
+        IResult::Error(_) => {
+            Err(ParseError::Problem)
+        },
+        IResult::Incomplete(_) => {
             Err(ParseError::Problem)
         }
     }
