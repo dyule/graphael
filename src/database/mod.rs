@@ -1,156 +1,29 @@
-//! Graphael is a lightweight graph database suitable for embedding in other applications.
-extern crate rustc_serialize;
-#[macro_use]
-extern crate nom;
 use std::collections::{HashMap, HashSet, LinkedList, VecDeque};
-use std::hash::{Hash, Hasher};
 use std::collections::hash_map::Entry;
 use rustc_serialize::{Decoder, Decodable, Encoder, Encodable};
 use rustc_serialize::json::{self, Json, ToJson};
 use std::fs::File;
 use std::io::{Read, Write};
-use std::io::Result as IOResult;
+use std::io;
 use std::string::ToString;
 use matching::*;
-
-pub mod queries;
-pub mod matching;
-/**************************/
-/*** Struct definitions ***/
-/**************************/
-
-/// Holds the data and metadata for this database.
-///
-/// A node can have any number of properties in any fashion (i.e. there is no schema)
-///
-///
-/// # Example
-///
-///
-/// ```
-/// # use graphael::{Graph, PropVal};
-/// let mut graph = Graph::new();
-/// let id = graph.add_node();
-/// let node = graph.get_node_mut(id).unwrap();
-/// node.props.insert("this_prop".to_string().into_boxed_str(), PropVal::Int(5));
-/// ```
-
-#[derive(PartialEq, Debug)]
-pub struct Node {
-    ///The ID of this node.  Should not be changed
-    id: NodeIndex,
-
-    /// The properties associated with this node.  The boxed string datatype can be generated from a string literal via `"property".to_string().into_boxed_str()`
-    pub props:HashMap<Box<str>, PropVal>,
-}
+use std::hash::{Hash, Hasher};
+use ::{Node, Graph, GraphDB, Edge, PropVal, NodeIndex};
 
 
-/// Connects nodes together with labeled relationships.  Will soon be removed from the public interface
-#[derive(Debug, PartialEq, Clone)]
-pub struct Edge {
-    /// The names of the relationships between nodes.
-	pub labels: HashSet<Box<str>>
-}
-
-#[derive(Debug)]
-pub struct DAG<'a> {
-    roots: HashSet<NodeIndex>,
-    nodes: HashMap<NodeIndex, DAGNode<'a>>
-}
-
-#[derive(Debug)]
-pub struct DAGNode<'a> {
-    node: &'a Node,
-    connected_to: Vec<NodeIndex>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Path<'a> {
-	pub nodes: Vec<NodeIndex>,
-	pub edges: Vec<&'a str>
-
-}
-
-/// Represents a value in a property field.
-///
-/// # Examples
-///
-/// ```
-/// # use graphael::{Graph, PropVal};
-/// # let mut graph = Graph::new();
-/// # let id = graph.add_node();
-/// # let node = graph.get_node_mut(id).unwrap();
-/// node.props.insert("this_prop".to_string().into_boxed_str(), PropVal::Int(5));
-/// node.props.insert("another_prop".to_string().into_boxed_str(), PropVal::String("a value".to_string().into_boxed_str()));
-/// ```
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub enum PropVal {
-    /// An integer value
-	Int(i64),
-    /// A string value.  Can be converted from a string literal via `"value".to_string().into_boxed_str()`
-	String(Box<str>)
-}
-
-#[derive (Debug)]
-pub struct Graph {
-    nodes: HashMap<NodeIndex, Node>,
-    edges: HashMap<NodeIndex, HashMap<NodeIndex, Edge>>,
-    reverse_edges: HashMap<NodeIndex, HashSet<NodeIndex>>,
-    max_node_id: NodeIndex
-}
-
-pub type NodeIndex = usize;
 
 /***********************/
 /*** Implementations ***/
 /***********************/
 
-impl  PartialEq for Graph {
+impl  PartialEq for GraphDB {
     fn eq(&self, other:&Self) -> bool {
         return self.nodes.eq(&other.nodes) && self.edges.eq(&other.edges)
     }
 }
 
-// impl ToJson for PropVal {
-// 	fn to_json(&self) -> Json {
-// 		match *self {
-// 			PropVal::String(ref s) => s.to_json(),
-// 			PropVal::Int(i) => i.to_json()
-// 		}
-// 	}
-// }
-//
-// /// Used to convert a Node to JSON
-// impl ToJson for Node {
-// 	fn to_json(&self) -> Json {
-// 		let mut d = BTreeMap::new();
-// 		let mut props = BTreeMap::new();
-// 		d.insert("id".to_string(), self.id.to_json());
-// 		for (k, v) in self.props.iter() {
-// 			props.insert(k.to_string(), v.to_json());
-// 		}
-// 		d.insert("props".to_string(), Json::Object(props));
-// 		Json::Object(d)
-// 	}
-// }
-//
-// impl ToJson for Edge {
-// 	fn to_json(&self) -> Json {
-// 		let mut d = BTreeMap::new();
-// 		d.insert("labels".to_string(), Json::Array(self.labels.iter().map(|l| Json::String(l.to_string())).collect()));
-// 		Json::Object(d)
-// 	}
-// }
-impl <'a> ToJson for Graph {
+impl <'a> ToJson for GraphDB {
 	fn to_json(&self) -> Json {
-		// let mut d = BTreeMap::new();
-		// let mut edge_json_map = BTreeMap::new();
-		// d.insert("nodes".to_string(), Json::Object(self.nodes.iter().map(|(i, n)| (i.to_string(), n.to_json())).collect()));
-		// for (index, edge) in self.edges.iter() {
-		// 	edge_json_map.insert(index.to_string(), Json::Object(edge.iter().map(|(i, n)| (i.to_string(), n.to_json())).collect()));
-		// }
-		// d.insert("edges".to_string(), Json::Object(edge_json_map));
-		// Json::Object(d)
         Json::from_str(&json::encode(self).unwrap()).unwrap()
     }
 }
@@ -217,7 +90,7 @@ impl Encodable for Edge {
     }
 }
 
-impl Encodable for Graph {
+impl Encodable for GraphDB {
     fn encode<E:Encoder>(&self, encoder: &mut E) -> Result<(), E::Error> {
         encoder.emit_struct("root", 2, |encoder| {
             try!(encoder.emit_struct_field("nodes", 0, |encoder| {
@@ -245,67 +118,6 @@ impl Encodable for Graph {
                     }
                     Ok(())
                 })
-            })
-        })
-    }
-}
-
-struct Link {
-    source: NodeIndex,
-    target: NodeIndex
-}
-
-impl<'a> Encodable for DAG<'a> {
-    fn encode<E:Encoder>(&self, encoder: &mut E) -> Result<(), E::Error> {
-        let mut node_array = Vec::new();
-        let mut link_array = Vec::new();
-        let mut id_lookup = HashMap::new();
-
-        for (index, (id, node)) in self.nodes.iter().enumerate() {
-            node_array.push(node.node);
-            id_lookup.insert(id, index);
-        }
-        for (id, node) in self.nodes.iter() {
-            let id = id_lookup.get(id).unwrap();
-            for target in node.connected_to.iter() {
-                link_array.push(Link{source: id.clone(), target: id_lookup[target].clone()})
-            }
-        }
-        encoder.emit_struct("root", 2, |encoder| {
-            try!(encoder.emit_struct_field("nodes", 0, |encoder| {
-                // encoder.emit_seq(node_array.len(), |encoder| {
-                //     for (index, node) in node_array.iter().enumerate() {
-                //         try!(encoder.emit_seq_elt(index, |encoder| {
-                //             node.encode(encoder)
-                //         }));
-                //     }
-                //     Ok(())
-                // })
-                node_array.encode(encoder)
-            }));
-            encoder.emit_struct_field("links", 1, |encoder| {
-                // encoder.emit_seq(link_array.len(), |encoder| {
-                //     for (index, link) in link_array.iter().enumerate() {
-                //         try!(encoder.emit_seq_elt(index, |encoder| {
-                //             link.encode(encoder)
-                //         }));
-                //     }
-                //     Ok(())
-                // })
-                link_array.encode(encoder)
-            })
-        })
-    }
-}
-
-impl Encodable for Link {
-    fn encode<E:Encoder>(&self, encoder: &mut E) -> Result<(), E::Error> {
-        encoder.emit_struct("root", 2, |encoder| {
-            try!(encoder.emit_struct_field("source", 0, |encoder| {
-                encoder.emit_usize(self.source)
-            }));
-            encoder.emit_struct_field("target", 1, |encoder| {
-                encoder.emit_usize(self.target)
             })
         })
     }
@@ -379,7 +191,7 @@ impl Decodable for Edge {
     }
 }
 
-impl Decodable for Graph {
+impl Decodable for GraphDB {
 
     fn decode<D:Decoder>(decoder: &mut D) -> Result<Self, D::Error> {
         decoder.read_struct("root", 2, |decoder| {
@@ -399,7 +211,7 @@ impl Decodable for Graph {
                 })
 
         }));
-        let mut g = Graph{
+        let mut g = GraphDB{
                 max_node_id: max_node_id,
                 nodes: nodes,
                 edges: HashMap::new(),
@@ -427,32 +239,32 @@ impl Decodable for Graph {
 
 impl Node {
     #[inline]
-    pub fn get_id(&self) -> NodeIndex {
+    pub fn get_id2(&self) -> NodeIndex {
         self.id
     }
 }
 
-impl<'a> PartialEq<DAGNode<'a>> for DAGNode<'a> {
-    fn eq(&self, other: &DAGNode) -> bool {
-        self.node.id == other.node.id
+impl PartialEq<Node> for Node {
+    fn eq(&self, other: &Node) -> bool {
+        self.id == other.id
     }
 }
 
-impl<'a> Eq for DAGNode<'a> {}
+impl Eq for Node {}
 
-impl <'a> Hash for DAGNode<'a> {
+impl Hash for Node {
     fn hash<H>(&self, state: &mut H) where H: Hasher {
-        self.node.id.hash(state)
+        self.id.hash(state)
     }
 }
 
-/*** Graph ***/
+/*** GraphDB ***/
 
-impl Graph {
+impl GraphDB {
 
 	/// Creates a new graph with no nodes or edges
-    pub fn new() -> Graph {
-        Graph {
+    pub fn new() -> GraphDB {
+        GraphDB {
             max_node_id: 0,
             nodes: HashMap::new(),
             edges: HashMap::new(),
@@ -462,7 +274,7 @@ impl Graph {
 
 	/// Encode and decode from file
 
-	pub fn from_json(json: Json) -> Graph {
+	pub fn from_json(json: Json) -> GraphDB {
 		let mut decoder = json::Decoder::new(json);
 		match Decodable::decode(&mut decoder) {
 			Ok(x) => x,
@@ -470,20 +282,20 @@ impl Graph {
 		}
 	}
 
-	pub fn read_from_file(name: String) -> Graph {
+	pub fn read_from_file(name: &str) -> io::Result<GraphDB> {
 		let mut contents = String::new();
-		let mut file:File = File::open(name).unwrap();
+		let mut file:File = try!(File::open(name));
 
-		file.read_to_string(&mut contents).unwrap();
+		try!(file.read_to_string(&mut contents));
 		let jsonstring = match Json::from_str(&contents) {
-			Ok(a) => a,
-			Err(e) => panic!("Error reading JSON string: {}", e)
+			Ok(jstr) => jstr,
+			Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e))
 		};
 
-		Graph::from_json(jsonstring)
+		Ok(GraphDB::from_json(jsonstring))
 	}
 
-	pub fn write_to_file(&self, name: &'static str) -> IOResult<usize> {
+	pub fn write_to_file(&self, name: &'static str) -> io::Result<usize> {
 		let mut file = try!(File::create(name));
 		file.write(self.to_json().to_string().as_bytes())
 	}
@@ -498,7 +310,7 @@ impl Graph {
         self.max_node_id
     }
 
-	/// Adds a Node to the Graph
+	/// Adds a Node to the GraphDB
     pub fn add_node(&mut self) -> NodeIndex {
         let idx = self.get_node_next_id();
         let node:Node = Node {
@@ -509,7 +321,7 @@ impl Graph {
 		idx
     }
 
-	/// Adds a Node to the Graph with the specified properties
+	/// Adds a Node to the GraphDB with the specified properties
 	pub fn add_node_with_props(&mut self, props: HashMap<Box<str>, PropVal>) -> NodeIndex {
 		//let id = self.add_node();
         let id = self.get_node_next_id();
@@ -521,7 +333,7 @@ impl Graph {
 		id
 	}
 
-	// Removes a Node from the Graph given a NodeIndex
+	// Removes a Node from the GraphDB given a NodeIndex
     pub fn remove_node(&mut self, node_id:NodeIndex) {
         if !self.nodes.contains_key(&node_id) {
             panic!("Tried to remove a node that didn't exist: {}", node_id);
@@ -541,36 +353,8 @@ impl Graph {
         self.nodes.remove(&node_id);
     }
 
-    pub fn get_node(&self, node_id:NodeIndex) -> Option<&Node> {
-        self.nodes.get(&node_id)
-    }
-
     pub fn get_node_mut(&mut self, node_id:NodeIndex) -> Option<&mut Node> {
         self.nodes.get_mut(&node_id)
-    }
-
-	/// Get Nodes with a given attribute
-    pub fn nodes_with_attr(&self, attr: &str) -> Vec<&Node> {
-		self.nodes.values().filter(|node|
-			if let Some(e) = self.edges.get(&node.id) {
-				if let Some(edge) = e.get(&node.id) {
-					edge.labels.contains(attr)
-				} else {
-					false
-				}
-			}
-			else {
-				false
-			}).collect()
-    }
-
-    /// Get Nodes with a key-value pair
-    pub fn nodes_with_prop(&self, key: &str, value: &PropVal) -> Vec<NodeIndex> {
-        self.nodes.values().filter(|node|
-            node.props.iter().find(|&(k, v)| **k == *key && *v == *value ).is_some())
-			.map(|node|
-				node.id
-			).collect()
     }
 
 	/*******************/
@@ -659,52 +443,6 @@ impl Graph {
 		}
 	}
 
-	/// Check if two nodes are connected on the graph
-    pub fn are_connected(&mut self, origin:NodeIndex, destination:NodeIndex) -> bool {
-        if !self.nodes.contains_key(&origin) {
-            panic!("Tried to check node id that wasn't in the database: {}", origin)
-        }
-
-        if !self.nodes.contains_key(&destination) {
-            panic!("Tried to check node id that wasn't in the database: {}", destination)
-        }
-        match self.edges.get(&origin) {
-            Some(m) => m.contains_key(&destination),
-            None    => false
-        }
-	}
-
-	pub fn edges_from(&self, source:NodeIndex) -> &HashMap<NodeIndex, Edge> {
-		self.edges.get(&source).unwrap()
-	}
-
-    /// Get Edges with a given label
-	pub fn edges_with_label(&self, label: &str) -> HashMap<&NodeIndex, HashMap<&NodeIndex, &Edge>> {
-		let mut edges = HashMap::<&NodeIndex, HashMap<&NodeIndex, &Edge>>::new();
-		for (src, map) in self.edges.iter() {
-			let filtered: HashMap<&NodeIndex, &Edge> = map.iter().filter(|&(_idx, edge)| edge.labels.contains(label)).collect();
-			if filtered.len() > 0 {
-				edges.insert(src, filtered);
-			}
-		}
-		edges
-	}
-
-	/// Get Nodes with a given label from a source NodeIndex
-	pub fn edges_with_label_from(&self, source: NodeIndex, label: &str) -> Vec<NodeIndex> {
-		if let Some(edge) = self.edges.get(&source) {
-		edge.iter().filter_map(
-			|(&idx, edge)|{
-				if edge.labels.contains(label) {
-					Some(idx)
-				} else {
-					None
-				}}).collect()
-			} else {
-				vec![]
-			}
-	}
-
     pub fn match_paths<'a>(&'a self, matcher: &MatchingAutomaton<'a>) -> MatchResult {
         let mut closed_set = HashSet::new();
         let mut open_set = VecDeque::new();
@@ -727,7 +465,7 @@ impl Graph {
                 closed_set.insert((node.id, state));
                 let mut found_match = false;
                 for (end_node_id, edge) in self.edges.get(&node.id).unwrap() {
-                    if let Some(edge_state) = matcher.next_state_edge(state, &edge) {
+                    if let Some(edge_state) = matcher.next_state_edge(state, &edge.labels) {
                         if matcher.is_complete(edge_state) {
                             parent_lookup.entry(*end_node_id,).or_insert(Vec::new()).push((node.id, edge));
                             finished_nodes.insert(*end_node_id);
@@ -753,50 +491,94 @@ impl Graph {
         MatchResult::new(parent_lookup, finished_nodes, self)
     }
 
+}
 
-	pub fn path_from(&self, source: NodeIndex, edge_predicate: &Fn(&str) -> bool, end_predicate: &Fn(NodeIndex) -> bool) -> Option<Path> {
-		let mut open_set = LinkedList::new();
-		let mut closed_set = HashSet::new();
-		let root_path = Path {
-			nodes: vec![source],
-			edges: vec![]
-		};
-		open_set.push_back(root_path);
-		closed_set.insert(source);
-		while !open_set.is_empty() {
-			let cur = open_set.pop_front().unwrap();
-			let cur_node = cur.nodes.last().unwrap();
-			closed_set.insert(*cur_node);
-			if let Some(e) = self.edges.get(&cur_node) {
-				for (child, edge) in e.iter() {
-					for label in &edge.labels {
-						if edge_predicate(&label) {
-                            let mut child_path = cur.clone();
-    						child_path.edges.push(label);
-    						child_path.nodes.push(*child);
-    						if end_predicate(*child) {
-    							return Some(child_path);
-    						} else {
-    							if !closed_set.contains(child) {
-    								open_set.push_back(child_path);
-    							}
-    						}
-                            break;
-						}
-					}
+impl Graph for GraphDB {
+
+    fn get_node(&self, node_id:NodeIndex) -> Option<&Node> {
+        self.nodes.get(&node_id)
+    }
+
+
+	/// Get Nodes with a given attribute
+    fn nodes_with_attr(&self, attr: &str) -> Vec<&Node> {
+		self.nodes.values().filter(|node|
+			if let Some(e) = self.edges.get(&node.id) {
+				if let Some(edge) = e.get(&node.id) {
+					edge.labels.contains(attr)
+				} else {
+					false
 				}
 			}
+			else {
+				false
+			}).collect()
+    }
+
+    /// Get Nodes with a key-value pair
+    fn nodes_with_prop(&self, key: &str, value: &PropVal) -> Vec<NodeIndex> {
+        self.nodes.values().filter(|node|
+            node.props.iter().find(|&(k, v)| **k == *key && *v == *value ).is_some())
+			.map(|node|
+				node.id
+			).collect()
+    }
+
+	/// Check if two nodes are connected on the graph
+    fn are_connected(&mut self, origin:NodeIndex, destination:NodeIndex) -> bool {
+        if !self.nodes.contains_key(&origin) {
+            panic!("Tried to check node id that wasn't in the database: {}", origin)
+        }
+
+        if !self.nodes.contains_key(&destination) {
+            panic!("Tried to check node id that wasn't in the database: {}", destination)
+        }
+        match self.edges.get(&origin) {
+            Some(m) => m.contains_key(&destination),
+            None    => false
+        }
+	}
+
+	fn edges_from(&self, source:NodeIndex) -> &HashMap<NodeIndex, Edge> {
+		self.edges.get(&source).unwrap()
+	}
+
+    /// Get Edges with a given label
+	fn edges_with_label(&self, label: &str) -> HashMap<&NodeIndex, HashMap<&NodeIndex, &Edge>> {
+		let mut edges = HashMap::<&NodeIndex, HashMap<&NodeIndex, &Edge>>::new();
+		for (src, map) in self.edges.iter() {
+			let filtered: HashMap<&NodeIndex, &Edge> = map.iter().filter(|&(_idx, edge)| edge.labels.contains(label)).collect();
+			if filtered.len() > 0 {
+				edges.insert(src, filtered);
+			}
 		}
-		None
+		edges
+	}
+
+	/// Get Nodes with a given label from a source NodeIndex
+	fn edges_with_label_from(&self, source: NodeIndex, label: &str) -> Vec<NodeIndex> {
+		if let Some(edge) = self.edges.get(&source) {
+		edge.iter().filter_map(
+			|(&idx, edge)|{
+				if edge.labels.contains(label) {
+					Some(idx)
+				} else {
+					None
+				}}).collect()
+			} else {
+				vec![]
+			}
 	}
 
 }
 
 #[cfg(test)]
+
 mod tests {
     use super::*;
-    use super::matching::{NodeMatcher, node_with_id, MatchingAutomaton};
+    use ::matching::{NodeMatcher, node_with_id, MatchingAutomaton};
     use rustc_serialize::json::{Json, ToJson};
+    use super::super::*;
 
     macro_rules! prop_map (
     	{ $($key:expr => $value:expr),+ } => {
@@ -812,7 +594,7 @@ mod tests {
 
     #[test]
     fn adding_nodes() {
-        let mut g = Graph::new();
+        let mut g = GraphDB::new();
         let id1 = g.add_node();
         let id2 = g.add_node();
         {
@@ -829,7 +611,7 @@ mod tests {
 
     #[test]
     fn connecting_nodes() {
-        let mut g = Graph::new();
+        let mut g = GraphDB::new();
         let id1 = g.add_node();
         let id2 = g.add_node();
         let id3 = g.add_node();
@@ -852,7 +634,7 @@ mod tests {
 
 	#[test]
 	fn disconnecting_nodes() {
-		let mut g = Graph::new();
+		let mut g = GraphDB::new();
 		let id1 = g.add_node();
         let id2 = g.add_node();
         let id3 = g.add_node();
@@ -869,7 +651,7 @@ mod tests {
 
     #[test]
     fn removing_nodes() {
-        let mut g = Graph::new();
+        let mut g = GraphDB::new();
         let id1 = g.add_node();
         let id2 = g.add_node();
         let id3 = g.add_node();
@@ -893,7 +675,7 @@ mod tests {
     }
 	#[test]
 	fn node_properties() {
-		let mut g = Graph::new();
+		let mut g = GraphDB::new();
 		let props_hash_map1 = prop_map! {
             "prop1" => "val1",
             "prop2" => "val2",
@@ -919,7 +701,7 @@ mod tests {
 
     #[test]
     fn json_io() {
-        let mut g = Graph::new();
+        let mut g = GraphDB::new();
         let id1 = g.add_node();
         let id2 = g.add_node();
         let id3 = g.add_node();
@@ -931,73 +713,13 @@ mod tests {
         let expected_string = r#"{"edges":{"1":{"2":{"labels":["hello"]}},"2":{"1":{"labels":["hi"]},"3":{"labels":["what's new"]}}},"nodes":{"1":{"id":1,"props":{}},"2":{"id":2,"props":{}},"3":{"id":3,"props":{}}}}"#;
         assert!(json_string == expected_string);
         let new_json = Json::from_str(expected_string).unwrap();
-        let g2 = Graph::from_json(new_json);
+        let g2 = GraphDB::from_json(new_json);
         assert!(g.eq(&g2));
     }
 
-	#[test]
-	fn get_path() {
-		let mut g = Graph::new();
-        let id1 = g.add_node();
-        let id2 = g.add_node();
-        let id3 = g.add_node();
-        let id4 = g.add_node();
-        let id5 = g.add_node();
-        let id6 = g.add_node();
-        let id7 = g.add_node();
-        let id8 = g.add_node();
-        let id9 = g.add_node();
-        let id10 = g.add_node();
-        let id11 = g.add_node();
-        let id12 = g.add_node();
-        let id13 = g.add_node();
-        let id14 = g.add_node();
-		g.connect_nodes(id1, id2, "conn1");
-		g.connect_nodes(id1, id3, "conn2");
-		g.connect_nodes(id2, id4, "conn3");
-		g.connect_nodes(id2, id5, "conn4");
-		g.connect_nodes(id3, id6, "conn5");
-		g.connect_nodes(id4, id7, "conn6");
-		g.connect_nodes(id5, id7, "conn7");
-		g.connect_nodes(id6, id5, "conn8");
-		g.connect_nodes(id6, id12, "conn9");
-		g.connect_nodes(id7, id9, "conn10");
-		g.connect_nodes(id7, id10, "conn11");
-		g.connect_nodes(id7, id11, "conn12");
-		g.connect_nodes(id7, id13, "conn13");
-		g.connect_nodes(id8, id11, "conn14");
-		g.connect_nodes(id9, id14, "conn15");
-		g.connect_nodes(id10, id14, "conn16");
-		g.connect_nodes(id10, id13, "conn17");
-		let result = g.path_from(id1, &|_| true, &|id| id == id14);
-		match result {
-			Some(r) => {
-				assert!(6 == r.nodes.len());
-				assert!(5 == r.edges.len());
-			}
-			None => {
-				panic!("Could not find path");
-			}
-		};
-		let result = g.path_from(id6, &|_| true, &|id| id == id13);
-		match result {
-			Some(r) => {
-				assert!(r.nodes == vec![id6, id5, id7, id13]);
-				assert!(r.edges == vec!["conn8", "conn7", "conn13"]);
-			}
-			None => {
-				panic!("Could not find path");
-			}
-		};
-		if g.path_from(id14, &|_| true, &|id| id == id4).is_some() {
-			panic!("Found path when there should not be one")
-		}
-
-	}
-
     #[test]
     fn test_matching() {
-        let g = Graph::read_from_file("data/langs.graph".to_string());
+        let g = GraphDB::read_from_file("data/langs.graph").unwrap();
         let matcher = node_with_id(7).connected_by_label("influenced").to(NodeMatcher::Any);
         let result = g.match_paths(&MatchingAutomaton::from_path_matcher(&matcher));
         println!("{:?}", result.to_dag());

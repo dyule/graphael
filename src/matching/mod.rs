@@ -125,7 +125,7 @@ impl<'a> PathMatcher<'a> {
 #[cfg(test)]
 mod tests {
     use super::{node_with_prop};
-    use ::{PropVal, Graph};
+    use ::{PropVal, GraphDB, Graph};
     macro_rules! dict (
     	{ $($key:expr => $value:expr),+ } => {
             {
@@ -140,7 +140,7 @@ mod tests {
     #[test]
     fn test_node_matcher() {
         let node_matcher = node_with_prop("prop1").and_prop_val("prop2", PropVal::String("val2".to_string().into_boxed_str()));
-        let mut g = Graph::new();
+        let mut g = GraphDB::new();
         let n1 = g.add_node_with_props(dict!{"prop1" => "val1", "prop2" => "val2"});
         let n2 = g.add_node_with_props(dict!{"prop1" =>  "val1", "prop2" => "val3"});
         let n3 = g.add_node_with_props(dict!{"prop2" =>  "val2"});

@@ -1,7 +1,7 @@
 extern crate rustc_serialize;
 extern crate graphael;
 use std::io::{self, BufRead, Write};
-use graphael::{Graph, PropVal};
+use graphael::{GraphDB, PropVal};
 
 
 
@@ -40,7 +40,7 @@ fn main() {
 	};
 
 	// Read a already filled database
-	let graph = Graph::read_from_file(format!("./data/{}.graph", graph_file));
+	let graph = GraphDB::read_from_file(&format!("./data/{}.graph", graph_file)).unwrap();
 
 	// Current state variable to keep track of which
 	// type of query we are doing

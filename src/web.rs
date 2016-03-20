@@ -2,11 +2,12 @@ extern crate graphael;
 extern crate hyper;
 extern crate rustc_serialize;
 extern crate url;
+extern crate argparse;
 #[macro_use]
 extern crate log;
 
 
-use graphael::{Graph};
+use graphael::{GraphDB};
 use std::sync::Mutex;
 use std::io;
 use std::io::Write;
@@ -20,9 +21,11 @@ use hyper::header::ContentType;
 use hyper::mime::{Mime, TopLevel, SubLevel, Attr, Value};
 use rustc_serialize::json;
 use url::{Url, UrlParser};
+use std::net::{Ipv4Addr, SocketAddrV4};
 use graphael::matching::MatchingAutomaton;
 use graphael::queries::parse_expression;
 use log::{LogRecord, LogLevel, LogMetadata, SetLoggerError, LogLevelFilter};
+use argparse::{ArgumentParser, Store};
 
 struct SimpleLogger;
 
@@ -57,14 +60,13 @@ impl SimpleLogger {
 }
 
 struct GraphHandler {
-    graph: Mutex<Graph>,
+    graph: Mutex<GraphDB>,
     base_url: Url
 }
 
 impl GraphHandler {
     fn handle_static(&self, path: &str, res:Response) {
         let file_path = path::Path::new("_static").join(path.split_at(1).1);
-        println!("{:?}", file_path);
         if let Ok(mut index_file) = fs::File::open(file_path) {
             let mut res = match res.start() {
                 Ok(res) => res,
@@ -92,7 +94,6 @@ impl GraphHandler {
                     param_map.insert(key, value);
                 }
                 if let Some(query) = param_map.get(&"q".to_string()) {
-                    //Write the graph as JSON
 
                     match  parse_expression(query) {
                         Ok(expression) => {
@@ -171,9 +172,37 @@ fn main() {
     if let Err(_)  = SimpleLogger::init() {
         println!("Unable to initialize logging");
     }
-    let graph = Graph::read_from_file("data/langs.graph".to_string());
-    Server::http("0.0.0.0:6421").unwrap().handle(GraphHandler {
-        graph: Mutex::new(graph),
-        base_url: Url::parse("http://localhost.com:6421").unwrap()
-    }).unwrap();
+    let mut graph_file = String::new();
+    let mut port = 6421;
+    {
+        let mut parser = ArgumentParser::new();
+        parser.set_description("Web itnerface for quieries graph database.");
+        parser.refer(&mut graph_file).required()
+            .add_argument("file", Store, "Database file to perform queries on");
+        parser.refer(&mut port)
+            .add_option(&["-p", "--port"], Store, "Port to listen on");
+        parser.parse_args_or_exit();
+    }
+    info!("Opening graph db file \"{}\"",  &graph_file);
+    let graph = match GraphDB::read_from_file(&graph_file) {
+        Ok(graph) => graph,
+        Err(e) => {
+            writeln!(& mut std::io::stderr(), "Unable to open file \"{}\": {}", graph_file, e).unwrap();
+            std::process::exit(1)
+        }
+    };
+    let base_url = format!("http://localhost.com:{}", port);
+    let listen_addr = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port);
+    match Server::http(listen_addr) {
+        Ok(server) => {
+            info!("Listening at {}", base_url);
+            server.handle(GraphHandler {
+                graph: Mutex::new(graph),
+                base_url: Url::parse(&base_url).unwrap()
+            }).unwrap();
+        },
+        Err(e) => {
+            writeln!(& mut std::io::stderr(), "Unable to start server on port {}: {}", port, e).unwrap();
+        }
+    }
 }

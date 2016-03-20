@@ -3,7 +3,7 @@ use std::fmt;
 use std::cmp;
 use std::collections::{HashMap, HashSet, VecDeque};
 use super::{NodeMatcher, PathMatcher, EdgeMatcher};
-use ::{Node, Edge};
+use ::{Node};
 use queries::{ASTPath, ASTEdge, EdgeToNode};
 
 #[derive(PartialEq)]
@@ -122,19 +122,19 @@ impl<'a> MatchingAutomaton<'a> {
         return None
     }
 
-    pub fn next_state_edge(&self, state: State, edge: &Edge) -> Option<State> {
+    pub fn next_state_edge(&self, state: State, labels: &HashSet<Box<str>>) -> Option<State> {
         if state >= self.transitions.len() {
             panic!("Tried to transition from state that wasn't in this automata")
         }
         for transition in self.transitions.get(state).unwrap() {
             match *transition {
                 Transition::EdgeTransition(ref label_match, ref new_state) => {
-                    if label_match.matches(&edge.labels) {
+                    if label_match.matches(labels) {
                         return Some(*new_state)
                     }
                 },
                 Transition::EpsilonTransition(new_state) => {
-                    if let Some(sub_state) = self.next_state_edge(new_state, edge) {
+                    if let Some(sub_state) = self.next_state_edge(new_state, labels) {
                         return Some(sub_state)
                     }
                 },
