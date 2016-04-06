@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, LinkedList, VecDeque};
+use std::collections::{HashMap, HashSet,  VecDeque};
 use std::collections::hash_map::Entry;
 use rustc_serialize::{Decoder, Decodable, Encoder, Encodable};
 use rustc_serialize::json::{self, Json, ToJson};
@@ -8,7 +8,8 @@ use std::io;
 use std::string::ToString;
 use matching::*;
 use std::hash::{Hash, Hasher};
-use ::{Node, Graph, GraphDB, Edge, PropVal, NodeIndex};
+use queries::ParseError;
+use ::{Node, Graph, GraphDB, Edge, PropVal, NodeIndex, IntoAutomata};
 
 
 
@@ -357,6 +358,21 @@ impl GraphDB {
         self.nodes.get_mut(&node_id)
     }
 
+    /// Get Nodes with a given attribute
+    pub fn nodes_with_attr(&self, attr: &str) -> Vec<&Node> {
+        self.nodes.values().filter(|node|
+            if let Some(e) = self.edges.get(&node.id) {
+                if let Some(edge) = e.get(&node.id) {
+                    edge.labels.contains(attr)
+                } else {
+                    false
+                }
+            }
+            else {
+                false
+            }).collect()
+    }
+
 	/*******************/
 	/****** Edges ******/
 	/*******************/
@@ -443,7 +459,8 @@ impl GraphDB {
 		}
 	}
 
-    pub fn match_paths<'a>(&'a self, matcher: &MatchingAutomaton<'a>) -> MatchResult {
+    pub fn match_paths<'a, I: IntoAutomata<'a>>(&'a self, matcher: I) -> Result<MatchResult, ParseError> {
+        let matcher = try!(matcher.into_automata());
         let mut closed_set = HashSet::new();
         let mut open_set = VecDeque::new();
         let mut parent_lookup = HashMap::new();
@@ -488,7 +505,7 @@ impl GraphDB {
             }
 
         }
-        MatchResult::new(parent_lookup, finished_nodes, self)
+        Ok(MatchResult::new(parent_lookup, finished_nodes, self))
     }
 
 }
@@ -499,21 +516,6 @@ impl Graph for GraphDB {
         self.nodes.get(&node_id)
     }
 
-
-	/// Get Nodes with a given attribute
-    fn nodes_with_attr(&self, attr: &str) -> Vec<&Node> {
-		self.nodes.values().filter(|node|
-			if let Some(e) = self.edges.get(&node.id) {
-				if let Some(edge) = e.get(&node.id) {
-					edge.labels.contains(attr)
-				} else {
-					false
-				}
-			}
-			else {
-				false
-			}).collect()
-    }
 
     /// Get Nodes with a key-value pair
     fn nodes_with_prop(&self, key: &str, value: &PropVal) -> Vec<NodeIndex> {
@@ -575,8 +577,7 @@ impl Graph for GraphDB {
 #[cfg(test)]
 
 mod tests {
-    use super::*;
-    use ::matching::{NodeMatcher, node_with_id, MatchingAutomaton};
+    use matching::{NodeMatcher, node_with_id, MatchingAutomaton};
     use rustc_serialize::json::{Json, ToJson};
     use super::super::*;
 
@@ -721,7 +722,7 @@ mod tests {
     fn test_matching() {
         let g = GraphDB::read_from_file("data/langs.graph").unwrap();
         let matcher = node_with_id(7).connected_by_label("influenced").to(NodeMatcher::Any);
-        let result = g.match_paths(&MatchingAutomaton::from_path_matcher(&matcher));
+        let result = g.match_paths(MatchingAutomaton::from_path_matcher(&matcher)).unwrap();
         println!("{:?}", result.to_dag());
     }
 }

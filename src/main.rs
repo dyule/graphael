@@ -1,7 +1,7 @@
 extern crate rustc_serialize;
 extern crate graphael;
 use std::io::{self, BufRead, Write};
-use graphael::{GraphDB, PropVal};
+use graphael::{GraphDB, PropVal, Graph};
 
 
 

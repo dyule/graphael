@@ -227,6 +227,7 @@ named!(path_expression<&str, ASTPath>, chain!(
     }
 ));
 
+#[derive(Debug)]
 pub enum ParseError {
     Problem
 }

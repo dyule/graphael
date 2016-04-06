@@ -3,8 +3,8 @@ use std::fmt;
 use std::cmp;
 use std::collections::{HashMap, HashSet, VecDeque};
 use super::{NodeMatcher, PathMatcher, EdgeMatcher};
-use ::{Node};
-use queries::{ASTPath, ASTEdge, EdgeToNode};
+use ::{Node, IntoAutomata};
+use queries::{ASTPath, ASTEdge, EdgeToNode, parse_expression, ParseError};
 
 #[derive(PartialEq)]
 /// An automata that can match paths in a graph.
@@ -67,6 +67,26 @@ impl <'a> cmp::PartialOrd<Transition<'a>> for Transition<'a> {
                 }
             }
         }
+    }
+}
+
+impl<'a> IntoAutomata<'a> for MatchingAutomaton<'a> {
+    fn into_automata(self) -> Result<MatchingAutomaton<'a>, ParseError> {
+        Ok(self)
+    }
+}
+
+impl<'a> IntoAutomata<'a> for &'static str {
+    fn into_automata(self) -> Result<MatchingAutomaton<'a>, ParseError> {
+        let expression = try!(parse_expression(self));
+        Ok(MatchingAutomaton::from_path_expression(expression))
+    }
+}
+
+impl<'a> IntoAutomata<'a> for &'a String {
+    fn into_automata(self) -> Result<MatchingAutomaton<'a>, ParseError> {
+        let expression = try!(parse_expression(self));
+        Ok(MatchingAutomaton::from_path_expression(expression))
     }
 }
 

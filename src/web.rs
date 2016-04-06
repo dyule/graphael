@@ -22,8 +22,6 @@ use hyper::mime::{Mime, TopLevel, SubLevel, Attr, Value};
 use rustc_serialize::json;
 use url::{Url, UrlParser};
 use std::net::{Ipv4Addr, SocketAddrV4};
-use graphael::matching::MatchingAutomaton;
-use graphael::queries::parse_expression;
 use log::{LogRecord, LogLevel, LogMetadata, SetLoggerError, LogLevelFilter};
 use argparse::{ArgumentParser, Store};
 
@@ -94,14 +92,10 @@ impl GraphHandler {
                     param_map.insert(key, value);
                 }
                 if let Some(query) = param_map.get(&"q".to_string()) {
-
-                    match  parse_expression(query) {
-                        Ok(expression) => {
-                            let automata = MatchingAutomaton::from_path_expression(expression);
-                            match self.graph.lock() {
-                                Ok(graph) => {
-                                    let result = graph.match_paths(&automata);
-
+                    match self.graph.lock() {
+                        Ok(graph) => {
+                            match  graph.match_paths(*query) {
+                                Ok(result) => {
                                     let dag = result.to_dag();
 
                                     let mut res = res.start().unwrap();
@@ -113,14 +107,15 @@ impl GraphHandler {
                                     try_write!(res.end());
                                 },
                                 Err(_) => {
-                                    // OH SHIT
+                                    self.handle_error(StatusCode::BadRequest, "Unable to parse path expression", true, res);
                                 }
                             }
                         },
                         Err(_) => {
-                            self.handle_error(StatusCode::BadRequest, "Unable to parse path expression", true, res);
+
                         }
                     }
+
                 } else {
                     self.handle_error(StatusCode::BadRequest, "Query parameter not set", true, res);
                 }

@@ -8,6 +8,8 @@ use std::collections::{HashMap, HashSet};
 pub mod database;
 pub mod matching;
 pub mod queries;
+use matching::MatchingAutomaton;
+use queries::ParseError;
 
 /// Holds the data and metadata for this database.
 ///
@@ -25,7 +27,7 @@ pub mod queries;
 /// node.props.insert("this_prop".to_string().into_boxed_str(), PropVal::Int(5));
 /// ```
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Node {
     ///The ID of this node.  Should not be changed
     id: NodeIndex,
@@ -80,8 +82,6 @@ pub type NodeIndex = usize;
 pub trait Graph {
     fn get_node(&self, node_id: NodeIndex) -> Option<&Node>;
 
-    fn nodes_with_attr(&self, attr: &str) -> Vec<&Node>;
-
     fn nodes_with_prop(&self, key: &str, value: &PropVal) -> Vec<NodeIndex>;
 
     fn are_connected(&mut self, origin: NodeIndex, destination: NodeIndex) -> bool;
@@ -91,4 +91,8 @@ pub trait Graph {
     fn edges_with_label(&self, label: &str) -> HashMap<&NodeIndex, HashMap<&NodeIndex, &Edge>>;
 
     fn edges_with_label_from(&self, source: NodeIndex, label: &str) -> Vec<NodeIndex>;
+}
+
+pub trait IntoAutomata<'a> {
+    fn into_automata(self) -> Result<MatchingAutomaton<'a>, ParseError>;
 }
