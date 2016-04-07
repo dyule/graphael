@@ -13,12 +13,12 @@ pub struct MatchResult<'a> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct EdgeNode {
     edge: Edge,
-    node: NodeIndex
+    node: Node
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResultRow {
-    head: NodeIndex,
+    head: Node,
     tail: Vec<EdgeNode>
 }
 
@@ -53,13 +53,12 @@ impl<'a> MatchResult<'a> {
         let mut rows = Vec::new();
         for node in self.finished_nodes.iter() {
             rows.push(ResultRow{
-                head: *node,
+                head: self.ref_graph.get_node(*node).unwrap().clone(),
                 tail: Vec::new()
             });
             let index = rows.len() - 1;
             self.add_node_to_row(*node, &mut rows, index);
         }
-        println!("rows: {:?}", rows);
         ResultSet {
             rows: self.reverse_rows(rows)
         }
@@ -78,7 +77,7 @@ impl<'a> MatchResult<'a> {
             };
             rows[index].tail.push(EdgeNode {
                 edge: edge.clone(),
-                node: parent
+                node: self.ref_graph.get_node(parent).unwrap().clone()
             });
             self.add_node_to_row(parent, rows, index);
         }
@@ -93,12 +92,13 @@ impl<'a> MatchResult<'a> {
                 let mut hanging_edge = None;
                 let mut first = true;
                 let mut new_row = ResultRow {
-                    head: 0,
+                    // XXX This is an extra copy that we don't technically need, but rust complains
+                    // if we move the value
+                    head: row.tail.get(row.tail.len() - 1).unwrap().node.clone(),
                     tail: Vec::new()
                 };
                 for edge_node in row.tail.into_iter().rev() {
                     if first {
-                        new_row.head = edge_node.node;
                         first = false;
                     } else {
                         new_row.tail.push(
@@ -271,16 +271,16 @@ impl Graph for DAG {
 
 #[cfg(test)]
 mod test {
-    use ::{GraphDB, Edge, NodeIndex};
+    use ::{GraphDB, Edge, NodeIndex, Graph};
     use super::{ResultRow, EdgeNode};
 
     #[test]
     fn result_set_rust_influenced_by() {
-        fn check_row(rows: &Vec<ResultRow>, end_node: NodeIndex) {
+        fn check_row(rows: &Vec<ResultRow>, g: &GraphDB, end_node: NodeIndex) {
             let my_row = ResultRow {
-                head: 112,
+                head: g.get_node(112).unwrap().clone(),
                 tail: vec![EdgeNode{
-                    node: end_node,
+                    node: g.get_node(end_node).unwrap().clone(),
                     edge: Edge {
                         labels: vec!["influencedBy".to_string().into_boxed_str()].into_iter().collect()
                     },
@@ -297,10 +297,10 @@ mod test {
         let g = GraphDB::read_from_file("data\\langs.graph").unwrap();
         let results = g.match_paths("(112) -influencedBy> ()").unwrap().to_result_set();
         assert_eq!(5, results.rows.len());
-        check_row(&results.rows, 212);
-        check_row(&results.rows, 116);
-        check_row(&results.rows, 143);
-        check_row(&results.rows, 245);
-        check_row(&results.rows, 179);
+        check_row(&results.rows, &g, 212);
+        check_row(&results.rows, &g, 116);
+        check_row(&results.rows, &g, 143);
+        check_row(&results.rows, &g, 245);
+        check_row(&results.rows, &g, 179);
     }
 }
