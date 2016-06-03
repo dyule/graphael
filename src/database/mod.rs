@@ -1,3 +1,5 @@
+mod indexing;
+
 use std::collections::{HashMap, HashSet,  VecDeque};
 use std::collections::hash_map::Entry;
 use rustc_serialize::{Decoder, Decodable, Encoder, Encodable};
@@ -10,8 +12,13 @@ use matching::*;
 use std::hash::{Hash, Hasher};
 use queries::ParseError;
 use ::{Node, Graph, GraphDB, Edge, PropVal, NodeIndex, IntoAutomata};
+use database::indexing::{create_prop_index, create_edge_index};
 
-
+#[derive(Debug)]
+pub enum PropIndexEntry {
+    Unindexed(HashSet<NodeIndex>),
+    Indexed(HashMap<PropVal, NodeIndex>)
+}
 
 /***********************/
 /*** Implementations ***/
@@ -212,11 +219,14 @@ impl Decodable for GraphDB {
                 })
 
         }));
+        let prop_index = create_prop_index(&nodes);
         let mut g = GraphDB{
                 max_node_id: max_node_id,
                 nodes: nodes,
                 edges: HashMap::new(),
-                reverse_edges: HashMap::new()
+                reverse_edges: HashMap::new(),
+                prop_index: prop_index,
+                label_index: HashMap::new()
             };
             try!(decoder.read_struct_field("edges", 2, |decoder| {
                 decoder.read_map(|decoder, len| {
@@ -232,16 +242,11 @@ impl Decodable for GraphDB {
                     Ok(())
                 })
             }));
+            let edge_index = create_edge_index(&g.edges);
+            g.label_index = edge_index;
             Ok(g)
         })
 
-    }
-}
-
-impl Node {
-    #[inline]
-    pub fn get_id2(&self) -> NodeIndex {
-        self.id
     }
 }
 
@@ -251,11 +256,19 @@ impl PartialEq<Node> for Node {
     }
 }
 
-impl Eq for Node {}
 
 impl Hash for Node {
     fn hash<H>(&self, state: &mut H) where H: Hasher {
         self.id.hash(state)
+    }
+}
+
+impl Hash for PropVal {
+    fn hash<H>(&self, state: &mut H) where H: Hasher {
+        match self {
+            &PropVal::Int(i) => i.hash(state),
+            &PropVal::String(ref s) => s.hash(state)
+        }
     }
 }
 
@@ -269,6 +282,8 @@ impl GraphDB {
             max_node_id: 0,
             nodes: HashMap::new(),
             edges: HashMap::new(),
+            prop_index: HashMap::new(),
+            label_index: HashMap::new(),
             reverse_edges: HashMap::new()
         }
     }

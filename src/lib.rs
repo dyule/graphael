@@ -10,6 +10,7 @@ pub mod matching;
 pub mod queries;
 use matching::MatchingAutomaton;
 use queries::ParseError;
+use database::PropIndexEntry;
 
 /// Holds the data and metadata for this database.
 ///
@@ -74,6 +75,8 @@ pub struct GraphDB {
     nodes: HashMap<NodeIndex, Node>,
     edges: HashMap<NodeIndex, HashMap<NodeIndex, Edge>>,
     reverse_edges: HashMap<NodeIndex, HashSet<NodeIndex>>,
+    prop_index: HashMap<Box<str>, PropIndexEntry>,
+    label_index: HashMap<Box<str>, HashSet<(NodeIndex, NodeIndex)>>,
     max_node_id: NodeIndex
 }
 
