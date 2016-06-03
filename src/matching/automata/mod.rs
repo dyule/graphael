@@ -1,3 +1,4 @@
+mod paths;
 use std::cell::Cell;
 use std::fmt;
 use std::cmp;
@@ -5,18 +6,19 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use super::{NodeMatcher, PathMatcher, EdgeMatcher};
 use ::{Node, IntoAutomata};
 use queries::{ASTPath, ASTEdge, EdgeToNode, parse_expression, ParseError};
+use matching::automata::paths::find_mandatory_states;
 
-#[derive(PartialEq)]
 /// An automata that can match paths in a graph.
 pub struct MatchingAutomaton<'a> {
     transitions: Vec<Vec<Transition<'a>>>,
-    final_states: HashSet<State>
+    final_states: HashSet<State>,
+    mandatory_states: HashSet<State>
 }
 
 pub type State = usize;
 
 #[derive(PartialEq, Debug, Eq, Ord, Clone)]
-enum Transition<'a> {
+pub enum Transition<'a> {
     NodeTransition(NodeMatcher, State),
     EdgeTransition(EdgeMatcher<'a>, State),
     EpsilonTransition(State), // allows moving to the next state without consuming any input
@@ -25,7 +27,6 @@ enum Transition<'a> {
 struct StateGenerator {
     max_state: Cell<State>
 }
-
 
 
 impl<'a> fmt::Debug for MatchingAutomaton<'a> {
@@ -70,6 +71,23 @@ impl <'a> cmp::PartialOrd<Transition<'a>> for Transition<'a> {
     }
 }
 
+impl<'a> Transition<'a> {
+    pub fn get_state(&self) -> State {
+        match self {
+            &Transition::NodeTransition(_, state) => state,
+            &Transition::EdgeTransition(_, state) => state,
+            &Transition::EpsilonTransition(state) => state
+        }
+    }
+}
+
+// We don't care about the mandatory states because they are guaranteed to be right.
+impl<'a> PartialEq for MatchingAutomaton<'a> {
+    fn eq(&self, other: &MatchingAutomaton<'a>) -> bool {
+        return self.transitions == other.transitions && self.final_states == other.final_states
+    }
+}
+
 impl<'a> IntoAutomata<'a> for MatchingAutomaton<'a> {
     fn into_automata(self) -> Result<MatchingAutomaton<'a>, ParseError> {
         Ok(self)
@@ -102,11 +120,7 @@ fn gather_states<'a>(starting_state: State, final_state: State, transitions: &mu
         if !found_states.contains(&current) {
             found_states.insert(current);
             for transition in transitions.get(current).unwrap() {
-                let child = match transition {
-                    &Transition::NodeTransition(_, child) => child,
-                    &Transition::EdgeTransition(_, child) => child,
-                    &Transition::EpsilonTransition(child) => child
-                };
+                let child = transition.get_state();
                 if !found_states.contains(&child) {
                     open_set.push_back(child);
                 }
@@ -174,7 +188,8 @@ impl<'a> MatchingAutomaton<'a> {
         let starting_state = factory.next_state();
         let final_state = MatchingAutomaton::process_path_expression(path, &factory, starting_state, &mut transitions);
         let final_states = MatchingAutomaton::find_final_states(final_state, &transitions);
-        MatchingAutomaton{transitions:transitions, final_states: final_states}
+        let mandatory_states = find_mandatory_states(&transitions, &final_states);
+        MatchingAutomaton{transitions:transitions, final_states: final_states, mandatory_states: mandatory_states}
     }
 
     fn process_path_expression(path: ASTPath<'a>, factory: &StateGenerator, starting_state: State, transitions: &mut Vec<Vec<Transition<'a>>>) -> State {
@@ -228,7 +243,8 @@ impl<'a> MatchingAutomaton<'a> {
         let start_state = factory.next_state();
         let final_state = MatchingAutomaton::process_path_matcher(matcher, &factory, start_state, start_state, &mut transitions);
         let final_states = MatchingAutomaton::find_final_states(final_state, &transitions);
-        MatchingAutomaton{transitions:transitions, final_states: final_states}
+        let mandatory_states = find_mandatory_states(&transitions, &final_states);
+        MatchingAutomaton{transitions:transitions, final_states: final_states, mandatory_states: mandatory_states}
 
     }
 
@@ -390,6 +406,8 @@ impl<'a> MatchingAutomaton<'a> {
         final_states
     }
 
+
+
     /// Converts the automata to a cannonical form.  Any two isomorphic automata are guaranteed
     /// to have the same cannonical form, and thus they can be compared.  Does not consume
     /// the automata.
@@ -453,9 +471,14 @@ impl<'a> MatchingAutomaton<'a> {
         for old_state in self.final_states.iter() {
             new_finals.insert(old_to_new[old_state]);
         }
+        let mut new_mandatory = HashSet::new();
+        for old_state in self.mandatory_states.iter() {
+            new_mandatory.insert(old_to_new[old_state]);
+        }
         MatchingAutomaton {
             transitions: new_transitions,
-            final_states: new_finals
+            final_states: new_finals,
+            mandatory_states: new_mandatory
         }
     }
 
@@ -505,7 +528,8 @@ mod tests {
         ];
         assert!(MatchingAutomaton{
             transitions: expected_transitions,
-            final_states: final_set!(2)
+            final_states: final_set!(2),
+            mandatory_states: HashSet::new()
         } == automaton)
     }
 
@@ -523,7 +547,8 @@ mod tests {
         ];
         assert!(MatchingAutomaton{
             transitions: expected_transitions,
-            final_states: final_set!(2)
+            final_states: final_set!(2),
+            mandatory_states: HashSet::new()
         } == automaton)
     }
 
@@ -544,7 +569,8 @@ mod tests {
         ];
         assert!(MatchingAutomaton{
             transitions: expected_transitions,
-            final_states: final_set!(4)
+            final_states: final_set!(4),
+            mandatory_states: HashSet::new()
         } == automaton)
     }
 
@@ -570,7 +596,8 @@ mod tests {
         ];
         assert!(MatchingAutomaton{
             transitions: expected_transitions,
-            final_states: final_set!(8)
+            final_states: final_set!(8),
+            mandatory_states: HashSet::new(),
         } == automaton.to_cannonical())
     }
 
@@ -597,7 +624,8 @@ mod tests {
 
         assert!(MatchingAutomaton{
             transitions: expected_transitions,
-            final_states: final_set!(0, 2, 3, 5, 7)
+            final_states: final_set!(0, 2, 3, 5, 7),
+            mandatory_states: HashSet::new()
         } == automaton.to_cannonical())
     }
 
@@ -625,7 +653,8 @@ mod tests {
 
         assert!(MatchingAutomaton{
             transitions: expected_transitions,
-            final_states: final_set!(3, 4)
+            final_states: final_set!(3, 4),
+            mandatory_states: HashSet::new()
         } == automaton.to_cannonical())
     }
 }

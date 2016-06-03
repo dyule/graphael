@@ -294,7 +294,7 @@ mod test {
             panic!("Could not find row {:?} in rows {:?}", my_row, rows);
 
         }
-        let g = GraphDB::read_from_file("data\\langs.graph").unwrap();
+        let g = GraphDB::read_from_file("data/langs.graph").unwrap();
         let results = g.match_paths("(112) -influencedBy> ()").unwrap().to_result_set();
         assert_eq!(5, results.rows.len());
         check_row(&results.rows, &g, 212);
