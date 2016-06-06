@@ -171,7 +171,7 @@ fn main() {
     let mut port = 6421;
     {
         let mut parser = ArgumentParser::new();
-        parser.set_description("Web itnerface for quieries graph database.");
+        parser.set_description("Web interface for queries graph database.");
         parser.refer(&mut graph_file).required()
             .add_argument("file", Store, "Database file to perform queries on");
         parser.refer(&mut port)

@@ -5,7 +5,7 @@ Graphael is a [graph database](http://en.wikipedia.org/wiki/Graph_database) writ
 
 ## Dependencies
 
-Graphael is built for Rust 1.4 or later
+Graphael is built for Rust 1.10 or later (currently requires nightly)
 
 The easiest way to install Rust is through the installers provided on [the Rust install page](http://www.rust-lang.org/install.html).
 

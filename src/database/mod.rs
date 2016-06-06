@@ -1,252 +1,33 @@
 mod indexing;
+mod serde;
 
 use std::collections::{HashMap, HashSet,  VecDeque};
 use std::collections::hash_map::Entry;
-use rustc_serialize::{Decoder, Decodable, Encoder, Encodable};
+use rustc_serialize::Decodable;
 use rustc_serialize::json::{self, Json, ToJson};
 use std::fs::File;
-use std::io::{Read, Write};
-use std::io;
+use std::io::{self, Read, Write};
 use std::string::ToString;
 use matching::*;
 use std::hash::{Hash, Hasher};
 use queries::ParseError;
-use ::{Node, Graph, GraphDB, Edge, PropVal, NodeIndex, IntoAutomata};
-use database::indexing::{create_prop_index, create_edge_index};
+use ::{Node, Graph, GraphDB, Edge, PropVal, NodeIndex, IntoAutomata, GraphInternal};
+use std::sync::{Arc, RwLock, Weak};
+use std::fmt;
 
 #[derive(Debug)]
 pub enum PropIndexEntry {
     Unindexed(HashSet<NodeIndex>),
-    Indexed(HashMap<PropVal, NodeIndex>)
+    Indexed(HashMap<PropVal, HashSet<NodeIndex>>)
 }
 
 /***********************/
 /*** Implementations ***/
 /***********************/
 
-impl  PartialEq for GraphDB {
+impl PartialEq for GraphDB {
     fn eq(&self, other:&Self) -> bool {
         return self.nodes.eq(&other.nodes) && self.edges.eq(&other.edges)
-    }
-}
-
-impl <'a> ToJson for GraphDB {
-	fn to_json(&self) -> Json {
-        Json::from_str(&json::encode(self).unwrap()).unwrap()
-    }
-}
-
-impl Encodable for PropVal {
-    fn encode<E:Encoder>(&self, encoder: &mut E) -> Result<(), E::Error> {
-
-        encoder.emit_struct("root", 2, |encoder| {
-            match *self {
-                PropVal::Int(ref val) => {
-                    try!(encoder.emit_struct_field("type", 0, |encoder| {
-                        encoder.emit_usize(0)
-                    }));
-                    encoder.emit_struct_field("value", 1, |encoder| {
-                        encoder.emit_i64(*val)
-                    })
-                },
-                PropVal::String(ref val) => {
-                    try!(encoder.emit_struct_field("type", 0, |encoder| {
-                        encoder.emit_usize(0)
-                    }));
-                    encoder.emit_struct_field("value", 1, |encoder| {
-                        encoder.emit_str(val)
-                    })
-                },
-            }
-        })
-    }
-}
-
-impl Encodable for Node {
-    fn encode<E:Encoder>(&self, encoder: &mut E) -> Result<(), E::Error> {
-        encoder.emit_struct("root", 2, |encoder| {
-            try!(encoder.emit_struct_field("id", 0, |encoder| {
-                encoder.emit_usize(self.id)
-            }));
-            encoder.emit_struct_field("props", 1, |encoder| {
-                encoder.emit_map(self.props.len(), |encoder| {
-                    for (index, (key, val)) in self.props.iter().enumerate() {
-                        try!(encoder.emit_map_elt_key(index, |encoder| {encoder.emit_str(key)}));
-                        try!(encoder.emit_map_elt_val(index, |encoder| {val.encode(encoder)}));
-                    }
-                    Ok(())
-                })
-            })
-        })
-    }
-}
-
-impl Encodable for Edge {
-    fn encode<E:Encoder>(&self, encoder: &mut E) -> Result<(), E::Error> {
-        encoder.emit_struct("root", 1, |encoder| {
-            encoder.emit_struct_field("labels", 0, |encoder| {
-                encoder.emit_seq(self.labels.len(), |encoder| {
-                    for (index, val) in self.labels.iter().enumerate() {
-                        try!(encoder.emit_seq_elt(index, |encoder| {
-                            encoder.emit_str(val)
-                        }));
-                    }
-                    Ok(())
-                })
-            })
-        })
-    }
-}
-
-impl Encodable for GraphDB {
-    fn encode<E:Encoder>(&self, encoder: &mut E) -> Result<(), E::Error> {
-        encoder.emit_struct("root", 2, |encoder| {
-            try!(encoder.emit_struct_field("nodes", 0, |encoder| {
-                encoder.emit_map(self.nodes.len(), |encoder| {
-                    for (index, (node_id, node)) in self.nodes.iter().enumerate() {
-                        try!(encoder.emit_map_elt_key(index, |encoder| {encoder.emit_usize(*node_id)}));
-                        try!(encoder.emit_map_elt_val(index, |encoder| {node.encode(encoder)}));
-                    }
-                    Ok(())
-                })
-            }));
-            encoder.emit_struct_field("edges", 1, |encoder| {
-                encoder.emit_map(self.edges.len(), |encoder| {
-                    for (index, (source, edge_map)) in self.edges.iter().enumerate() {
-                        try!(encoder.emit_map_elt_key(index, |encoder| {encoder.emit_usize(*source)}));
-                        try!(encoder.emit_map_elt_val(index, |encoder| {
-                            encoder.emit_map(edge_map.len(), |encoder| {
-                                for (index, (target, edge)) in edge_map.iter().enumerate() {
-                                    try!(encoder.emit_map_elt_key(index, |encoder| {encoder.emit_usize(*target)}));
-                                    try!(encoder.emit_map_elt_val(index, |encoder| {edge.encode(encoder)}));
-                                }
-                                Ok(())
-                            })
-                        }));
-                    }
-                    Ok(())
-                })
-            })
-        })
-    }
-}
-
-impl Decodable for PropVal {
-    fn decode<D:Decoder>(decoder: &mut D) -> Result<Self, D::Error> {
-        decoder.read_struct("root", 2, |decoder| {
-            let t = try!(decoder.read_struct_field("type", 0, |decoder| {
-                decoder.read_usize()
-            }));
-            decoder.read_struct_field("value", 1, |decoder| {
-                match t {
-                    0 => match decoder.read_i64() {
-                        Ok(val) => Ok(PropVal::Int(val)),
-                        Err(e) => Err(e)
-                    },
-                    1 => match decoder.read_str() {
-                        Ok(val) => Ok(PropVal::String(val.into_boxed_str())),
-                        Err(e) => Err(e)
-                    },
-                    _ => Err(decoder.error("Unexpected property value type"))
-                }
-            })
-        })
-    }
-}
-
-impl Decodable for Node {
-    fn decode<D:Decoder>(decoder: &mut D) -> Result<Self, D::Error> {
-        decoder.read_struct("root", 2, |decoder| {
-            let id = try!(decoder.read_struct_field("id", 0, |decoder| {
-                decoder.read_usize()
-            }));
-            let props = try!(decoder.read_struct_field("props", 1, |decoder| {
-                decoder.read_map(|decoder, len| {
-                    let mut props:HashMap<Box<str>, PropVal> = HashMap::new();
-                    for idx in 0..len {
-                        let prop_key:String = try!(decoder.read_map_elt_key(idx, |decoder| decoder.read_str()));
-                        let value:PropVal = try!(decoder.read_map_elt_val(idx, |decoder| PropVal::decode(decoder)));
-                        props.insert(prop_key.into_boxed_str(), value);
-                    }
-                    Ok(props)
-                })
-            }));
-            Ok(Node{
-                id: id,
-                props: props
-            })
-        })
-    }
-}
-
-impl Decodable for Edge {
-    fn decode<D:Decoder>(decoder: &mut D) -> Result<Self, D::Error> {
-        decoder.read_struct("root", 1, |decoder| {
-            let labels = try!(decoder.read_struct_field("labels", 0, |decoder| {
-                decoder.read_seq(|decoder, len| {
-                    let mut labels:HashSet<Box<str>> = HashSet::new();
-                    for idx in 0..len {
-                        let label:String = try!(decoder.read_seq_elt(idx, |decoder| decoder.read_str()));
-                        labels.insert(label.into_boxed_str());
-                    }
-                    Ok(labels)
-                })
-            }));
-            Ok(Edge{
-                labels: labels
-            })
-        })
-    }
-}
-
-impl Decodable for GraphDB {
-
-    fn decode<D:Decoder>(decoder: &mut D) -> Result<Self, D::Error> {
-        decoder.read_struct("root", 2, |decoder| {
-            let mut max_node_id = 0;
-            let nodes = try!(decoder.read_struct_field("nodes", 1, |decoder| {
-                decoder.read_map(|decoder, len| {
-                    let mut nodes = HashMap::new();
-                    for idx in 0..len {
-                        let node_index = try!(decoder.read_map_elt_key(idx, |decoder| decoder.read_usize()));
-                        let node:Node = try!(decoder.read_map_elt_val(idx, |decoder| Decodable::decode(decoder)));
-                        if node_index > max_node_id {
-                            max_node_id = node_index + 1;
-                        }
-                        nodes.insert(node_index, node);
-                    }
-                    Ok(nodes)
-                })
-
-        }));
-        let prop_index = create_prop_index(&nodes);
-        let mut g = GraphDB{
-                max_node_id: max_node_id,
-                nodes: nodes,
-                edges: HashMap::new(),
-                reverse_edges: HashMap::new(),
-                prop_index: prop_index,
-                label_index: HashMap::new()
-            };
-            try!(decoder.read_struct_field("edges", 2, |decoder| {
-                decoder.read_map(|decoder, len| {
-                    for idx in 0..len {
-                        let source_index = try!(decoder.read_map_elt_key(idx, |decoder| decoder.read_usize()));
-                        let edge_map:HashMap<NodeIndex, Edge> = try!(decoder.read_map_elt_val(idx, |decoder| Decodable::decode(decoder)));
-                        for (destination_index, edge) in edge_map.iter() {
-							for label in edge.labels.iter() {
-                            	g.connect_nodes(source_index, *destination_index, label)
-							}
-                        };
-                    }
-                    Ok(())
-                })
-            }));
-            let edge_index = create_edge_index(&g.edges);
-            g.label_index = edge_index;
-            Ok(g)
-        })
-
     }
 }
 
@@ -272,19 +53,116 @@ impl Hash for PropVal {
     }
 }
 
+impl fmt::Display for PropVal {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &PropVal::Int(i) => i.fmt(f),
+            &PropVal::String(ref s) => s.fmt(f)
+        }
+    }
+}
+
+impl Node {
+
+    /// Sets the value of a property.
+    /// Updates any indices for the various properties in question
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use graphael::{GraphDB, PropVal};
+    /// let mut graph = GraphDB::new();
+    /// let id = graph.add_node();
+    /// let node = graph.get_node_mut(id).unwrap();
+    /// node.set_prop("this_prop", PropVal::Int(5));
+    /// ```
+    pub fn set_prop(&mut self, prop: &str, value: PropVal) -> Option<PropVal> {
+        let prop = prop.to_string().into_boxed_str();
+        let graph = Weak::upgrade(&self.graph.clone()).unwrap();
+        graph.write().unwrap().update_prop_index(self, &prop, &value);
+        self.props.insert(prop, value)
+    }
+
+    /// Unsets a previously set property
+    /// Updates any indices for the value in question
+    /// # Example
+    ///
+    /// ```
+    /// # use graphael::{GraphDB, PropVal};
+    /// let mut graph = GraphDB::new();
+    /// let id = graph.add_node();
+    /// let node = graph.get_node_mut(id).unwrap();
+    /// node.set_prop("this_prop", PropVal::Int(5));
+    /// node.set_prop("another_prop", PropVal::Int(94));
+    /// node.unset_prop("this_prop");
+    /// assert!(node.get_prop("this_prop").is_none())
+    /// ```
+    pub fn unset_prop(&mut self, prop: &str) -> Option<PropVal> {
+        let prop = prop.to_string().into_boxed_str();
+        let graph = Weak::upgrade(&self.graph.clone()).unwrap();
+        let mut  graph = graph.write().unwrap();
+        let value = self.props.remove(&prop);
+        if let Some(ref value) = value {
+            graph.remove_prop_index(self, &prop, &value);
+        }
+        value
+    }
+
+    pub fn get_prop(&self, prop: &str) -> Option<&PropVal> {
+        let prop = prop.to_string().into_boxed_str();
+        self.props.get(&prop)
+    }
+}
+
+impl GraphInternal {
+    fn update_prop_index(&mut self, node: &Node, prop: &Box<str>, value: &PropVal) {
+        match self.prop_index.entry(prop.clone()).or_insert(PropIndexEntry::Unindexed(HashSet::new())) {
+            &mut PropIndexEntry::Unindexed(ref mut indexes) => {
+                indexes.insert(node.id);
+            },
+            &mut PropIndexEntry::Indexed(ref mut mapping) => {
+                if let Some(ref mut indexes) = mapping.get_mut(value) {
+                    indexes.remove(&node.id);
+                }
+                let mut indexes = mapping.entry(value.clone()).or_insert(HashSet::new());
+                indexes.insert(node.id);
+
+            }
+        }
+    }
+
+    fn remove_prop_index(&mut self, node: &Node, prop: &Box<str>, value: &PropVal) {
+        if let Some(prop_index) = self.prop_index.get_mut(prop) {
+            match prop_index {
+                &mut PropIndexEntry::Unindexed(ref mut indexes) => {
+                    indexes.insert(node.id);
+                },
+                &mut PropIndexEntry::Indexed(ref mut mapping) => {
+                    if let Some(ref mut indexes) = mapping.get_mut(value) {
+                        indexes.remove(&node.id);
+                    }
+                }
+            }
+        }
+    }
+}
+
 /*** GraphDB ***/
 
 impl GraphDB {
 
 	/// Creates a new graph with no nodes or edges
+    #[inline]
     pub fn new() -> GraphDB {
         GraphDB {
             max_node_id: 0,
             nodes: HashMap::new(),
             edges: HashMap::new(),
-            prop_index: HashMap::new(),
-            label_index: HashMap::new(),
-            reverse_edges: HashMap::new()
+            reverse_edges: HashMap::new(),
+            internal: Arc::new(RwLock::new(GraphInternal{
+                prop_index: HashMap::new(),
+                label_index: HashMap::new()
+            }))
         }
     }
 
@@ -330,8 +208,9 @@ impl GraphDB {
     pub fn add_node(&mut self) -> NodeIndex {
         let idx = self.get_node_next_id();
         let node:Node = Node {
+            graph: Arc::downgrade(&self.internal.clone()),
             id: idx,
-            props: HashMap::new(),
+            props: HashMap::new()
         };
         self.nodes.insert(idx, node);
 		idx
@@ -342,6 +221,7 @@ impl GraphDB {
 		//let id = self.add_node();
         let id = self.get_node_next_id();
         let node:Node = Node {
+            graph: Arc::downgrade(&self.internal.clone()),
             id: id,
             props: props
         };

@@ -11,6 +11,7 @@ pub mod queries;
 use matching::MatchingAutomaton;
 use queries::ParseError;
 use database::PropIndexEntry;
+use std::sync::{Arc, RwLock, Weak};
 
 /// Holds the data and metadata for this database.
 ///
@@ -19,13 +20,12 @@ use database::PropIndexEntry;
 ///
 /// # Example
 ///
-///
 /// ```
 /// # use graphael::{GraphDB, PropVal};
 /// let mut graph = GraphDB::new();
 /// let id = graph.add_node();
 /// let node = graph.get_node_mut(id).unwrap();
-/// node.props.insert("this_prop".to_string().into_boxed_str(), PropVal::Int(5));
+/// node.set_prop("this_prop", PropVal::Int(5));
 /// ```
 
 #[derive(Debug, Clone)]
@@ -33,8 +33,11 @@ pub struct Node {
     ///The ID of this node.  Should not be changed
     id: NodeIndex,
 
+    /// The graph this node belongs to
+    graph: Weak<RwLock<GraphInternal>>,
+
     /// The properties associated with this node.  The boxed string datatype can be generated from a string literal via `"property".to_string().into_boxed_str()`
-    pub props:HashMap<Box<str>, PropVal>,
+    props:HashMap<Box<str>, PropVal>,
 }
 
 /**************************/
@@ -59,8 +62,9 @@ pub struct Edge {
 /// # let mut graph = GraphDB::new();
 /// # let id = graph.add_node();
 /// # let node = graph.get_node_mut(id).unwrap();
-/// node.props.insert("this_prop".to_string().into_boxed_str(), PropVal::Int(5));
-/// node.props.insert("another_prop".to_string().into_boxed_str(), PropVal::String("a value".to_string().into_boxed_str()));
+/// node.set_prop("this_prop", PropVal::Int(5));
+/// node.set_prop("another_prop", PropVal::String("a value".to_string().into_boxed_str()));
+/// println!("The property is: {}", node.get_prop("this_prop").unwrap());
 /// ```
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub enum PropVal {
@@ -72,12 +76,17 @@ pub enum PropVal {
 
 #[derive (Debug)]
 pub struct GraphDB {
+    internal: Arc<RwLock<GraphInternal>>,
     nodes: HashMap<NodeIndex, Node>,
     edges: HashMap<NodeIndex, HashMap<NodeIndex, Edge>>,
     reverse_edges: HashMap<NodeIndex, HashSet<NodeIndex>>,
+    max_node_id: NodeIndex
+}
+
+#[derive (Debug)]
+struct GraphInternal {
     prop_index: HashMap<Box<str>, PropIndexEntry>,
     label_index: HashMap<Box<str>, HashSet<(NodeIndex, NodeIndex)>>,
-    max_node_id: NodeIndex
 }
 
 pub type NodeIndex = usize;
