@@ -65,7 +65,7 @@ impl fmt::Display for PropVal {
 impl Node {
 
     /// Sets the value of a property.
-    /// Updates any indices for the various properties in question
+    /// Updates any indices for the property in question
     ///
     /// # Example
     ///
@@ -108,6 +108,19 @@ impl Node {
         value
     }
 
+
+    /// Gets the value of a property.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use graphael::{GraphDB, PropVal};
+    /// let mut graph = GraphDB::new();
+    /// let id = graph.add_node();
+    /// let node = graph.get_node_mut(id).unwrap();
+    /// node.set_prop("this_prop", PropVal::Int(5));
+    /// assert_eq!(node.get_prop("this_prop").unwrap(), &PropVal::Int(5));
+    /// ```
     pub fn get_prop(&self, prop: &str) -> Option<&PropVal> {
         let prop = prop.to_string().into_boxed_str();
         self.props.get(&prop)
@@ -143,6 +156,17 @@ impl GraphInternal {
                     }
                 }
             }
+        }
+    }
+
+    fn update_edge_index(&mut self, src: NodeIndex, dst: NodeIndex, label: &Box<str>) {
+        let mut index = self.label_index.entry(label.clone()).or_insert(HashSet::new());
+        index.insert((src, dst));
+    }
+
+    fn remove_edge_from_index(&mut self, src: NodeIndex, dst: NodeIndex, label: &str) {
+        if let Some(index) = self.label_index.get_mut(label) {
+            index.remove(&(src, dst));
         }
     }
 }
@@ -282,13 +306,17 @@ impl GraphDB {
             panic!("Tried to connect node id that wasn't in the database: {}", destination)
         }
 		let src_map = self.edges.entry(origin).or_insert(HashMap::new());
+        let label = label.to_string().into_boxed_str();
+        self.internal.write().unwrap().update_edge_index(origin, destination, &label);
 		match src_map.entry(destination) {
 			Entry::Vacant(e) => {
 				let mut s = HashSet::new();
-				s.insert(label.to_string().into_boxed_str());
+				s.insert(label);
 				e.insert(Edge { labels: s });
 			},
-			Entry::Occupied(mut e) => if !e.get().labels.contains(label) { e.get_mut().labels.insert(label.to_string().into_boxed_str()); } else {()}
+			Entry::Occupied(mut e) => {
+                e.get_mut().labels.insert(label);
+            }
 		};
 
         if match self.reverse_edges.get_mut(&origin){
@@ -327,6 +355,7 @@ impl GraphDB {
 					Entry::Occupied(mut edge) => {
 						if edge.get().labels.contains(label) {
 							edge.get_mut().labels.remove(label);
+                            self.internal.write().unwrap().remove_edge_from_index(origin, destination, label);
 							if edge.get().labels.is_empty() {
 								edge.remove();
 								match self.reverse_edges.entry(origin) {
@@ -441,30 +470,19 @@ impl Graph for GraphDB {
 	}
 
     /// Get Edges with a given label
-	fn edges_with_label(&self, label: &str) -> HashMap<&NodeIndex, HashMap<&NodeIndex, &Edge>> {
-		let mut edges = HashMap::<&NodeIndex, HashMap<&NodeIndex, &Edge>>::new();
-		for (src, map) in self.edges.iter() {
-			let filtered: HashMap<&NodeIndex, &Edge> = map.iter().filter(|&(_idx, edge)| edge.labels.contains(label)).collect();
-			if filtered.len() > 0 {
-				edges.insert(src, filtered);
-			}
-		}
-		edges
+	fn edges_with_label<'a>(&'a self, label: &str) -> HashSet<(NodeIndex, NodeIndex)> {
+		self.internal.read().unwrap().label_index.get(label).map(|set| set.clone()).unwrap_or(HashSet::new())
 	}
 
 	/// Get Nodes with a given label from a source NodeIndex
 	fn edges_with_label_from(&self, source: NodeIndex, label: &str) -> Vec<NodeIndex> {
-		if let Some(edge) = self.edges.get(&source) {
-		edge.iter().filter_map(
-			|(&idx, edge)|{
-				if edge.labels.contains(label) {
-					Some(idx)
-				} else {
-					None
-				}}).collect()
-			} else {
-				vec![]
-			}
+		self.edges_with_label(label).iter().filter_map(|&(src, dst)|
+            if src == source {
+                Some(dst)
+            } else {
+                None
+            }
+        ).collect()
 	}
 
 }
@@ -523,7 +541,6 @@ mod tests {
         assert!(!g.are_connected(id3, id2));
 
 		g.connect_nodes(id1, id2, "second_label");
-		println!("{:?}", g.edges_with_label_from(id1, "second_label"));
 		assert!(g.edges_with_label_from(id1, "second_label") == vec![id2]);
 		assert!(g.edges_with_label_from(id1, "hello") == vec![id2]);
     }
@@ -541,8 +558,9 @@ mod tests {
 		assert!(!g.are_connected(id1, id2));
 		assert!(g.are_connected(id2, id1));
 		g.remove_node(id1);
-		assert!(1 == g.edges_from(id2).len());
+		assert_eq!(g.edges_from(id2).len(), 1);
 		assert!(g.are_connected(id2, id3));
+        assert_eq!(g.edges_with_label_from(id2, "hello"), vec![id3]);
 	}
 
     #[test]

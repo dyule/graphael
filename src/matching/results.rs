@@ -243,15 +243,12 @@ impl Graph for DAG {
         &self.nodes.get(&source).unwrap().connected_to
     }
 
-    fn edges_with_label(&self, label: &str) -> HashMap<&NodeIndex, HashMap<&NodeIndex, &Edge>> {
-        let mut edges = HashMap::<&NodeIndex, HashMap<&NodeIndex, &Edge>>::new();
-		for (src, node) in self.nodes.iter() {
-			let filtered: HashMap<&NodeIndex, &Edge> = node.connected_to.iter().filter(|&(_idx, edge)| edge.labels.contains(label)).collect();
-			if filtered.len() > 0 {
-				edges.insert(src, filtered);
-			}
-		}
-		edges
+    fn edges_with_label(&self, label: &str) -> HashSet<(NodeIndex, NodeIndex)> {
+        self.nodes.iter().flat_map(|(src, node)|
+            node.connected_to.iter().filter(|&(_idx, edge)|
+                edge.labels.contains(label)
+            ).map(move |(idx, _edge)| (*src, *idx))
+        ).collect()
     }
 
     fn edges_with_label_from(&self, source: NodeIndex, label: &str) -> Vec<NodeIndex> {

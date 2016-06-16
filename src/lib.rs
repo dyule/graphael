@@ -50,7 +50,7 @@ pub struct Node {
 #[derive(Debug, PartialEq, Clone)]
 pub struct Edge {
     /// The names of the relationships between nodes.
-	pub labels: HashSet<Box<str>>
+	labels: HashSet<Box<str>>
 }
 
 /// Represents a value in a property field.
@@ -100,7 +100,7 @@ pub trait Graph {
 
     fn edges_from(&self, source: NodeIndex) -> &HashMap<NodeIndex, Edge>;
 
-    fn edges_with_label(&self, label: &str) -> HashMap<&NodeIndex, HashMap<&NodeIndex, &Edge>>;
+    fn edges_with_label(&self, label: &str) -> HashSet<(NodeIndex, NodeIndex)>;
 
     fn edges_with_label_from(&self, source: NodeIndex, label: &str) -> Vec<NodeIndex>;
 }
