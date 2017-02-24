@@ -5,14 +5,13 @@ authors = [ "Jeremy Jacobson", "Daniel Yule <yule@cs.dal.ca>" ]
 
 [dependencies]
 rustc-serialize = "0.3"
-nom = "~1.2.1"
-url = "0.5.5"
+nom = "2.1"
+url = "1.0"
 log = "0.3"
 argparse = "0.2"
 
 [dependencies.hyper]
-version = "0.7"
-default-features = false
+version = "0.10"
 
 
 [lib]

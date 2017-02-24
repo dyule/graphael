@@ -94,7 +94,7 @@ impl<'a> IntoAutomata<'a> for MatchingAutomaton<'a> {
     }
 }
 
-impl<'a> IntoAutomata<'a> for &'static str {
+impl<'a> IntoAutomata<'a> for &'a str {
     fn into_automata(self) -> Result<MatchingAutomaton<'a>, ParseError> {
         let expression = try!(parse_expression(self));
         Ok(MatchingAutomaton::from_path_expression(expression))

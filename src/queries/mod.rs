@@ -17,9 +17,9 @@ fn is_alphanumeric(c: char) -> bool {
 named!(node_expression<&str, NodeMatcher >, delimited!(
     tag_s!("("),
     chain!(
-        opt!(multispace) ~
+        opt!(complete!(multispace)) ~
         node_exp: opt!(alt!(node_id_expression | node_props_expression)) ~
-        opt!(multispace), || {
+        opt!(complete!(multispace)), || {
             match node_exp {
                 Some(ref node) => node.clone(),
                 None => NodeMatcher::Any
@@ -41,9 +41,9 @@ named!(node_id_expression<&str, NodeMatcher >, map_res!(
 named!(node_props_expression<&str, NodeMatcher>, map!(delimited!(
     tag_s!("{"),
     chain!(
-        opt!(multispace) ~
+        opt!(complete!(multispace)) ~
         prop_list: separated_list!(tag_s!(","), node_prop) ~
-        opt!(multispace), || {
+        opt!(complete!(multispace)), || {
             prop_list.iter().fold(None, |acc, prop| {
                 match acc {
                     Some(acc) => Some(NodeMatcher::And(Box::new(acc), Box::new(prop.clone()))),
@@ -60,13 +60,13 @@ named!(node_props_expression<&str, NodeMatcher>, map!(delimited!(
 }));
 
 named!(node_prop<&str, NodeMatcher>, chain!(
-    opt!(multispace) ~
+    opt!(complete!(multispace)) ~
     key: symbolic_name ~
-    opt!(multispace) ~
+    opt!(complete!(multispace)) ~
     tag_s!(":") ~
-    opt!(multispace) ~
+    opt!(complete!(multispace)) ~
     v: prop_val ~
-    opt!(multispace), || {
+    opt!(complete!(multispace)), || {
         NodeMatcher::PropVal(key.to_string().into_boxed_str(), v)
     }
 ));
@@ -117,9 +117,9 @@ named!(prop_val_string<&str, PropVal>, chain!(
 
 named!(edge_expression<&str, ASTEdge>, chain!(
     tag_s!("-") ~
-    opt!(multispace) ~
+    opt!(complete!(multispace)) ~
     labels: opt!(label_list) ~
-    opt!(multispace) ~
+    opt!(complete!(multispace)) ~
     tag_s!(">"), || {
         match labels {
             Some(ref labels) => ASTEdge::LabelList(labels.clone()),
@@ -130,9 +130,9 @@ named!(edge_expression<&str, ASTEdge>, chain!(
 
 named!(label_list<&str, Vec<&str> >, separated_list!(
     chain!(
-        opt!(multispace) ~
+        opt!(complete!(multispace)) ~
         tag_s!(",") ~
-        opt!(multispace), || {}
+        opt!(complete!(multispace)), || {}
     ),
     symbolic_name
 ));
@@ -141,9 +141,9 @@ named!(label_list<&str, Vec<&str> >, separated_list!(
 named!(edge_to_node<&str, EdgeToNode >, alt!(
     chain!(
         edge: edge_expression ~
-        opt!(multispace) ~
+        opt!(complete!(multispace)) ~
         node: node_expression  ~
-        opt!(multispace) ~
+        opt!(complete!(multispace)) ~
         tail: opt!(complete!(edge_to_node)), ||
         {
             EdgeToNode::Standard {
@@ -159,7 +159,7 @@ named!(edge_to_node<&str, EdgeToNode >, alt!(
             tag_s!("]")
         ) ~
         repeater: opt!(complete!(repeat_brace)) ~
-        opt!(multispace) ~
+        opt!(complete!(multispace)) ~
         tail: opt!(complete!(edge_to_node)), ||
         {
             match repeater {
@@ -201,13 +201,13 @@ named!(unsiged_integer<&str, u32>, map_res!(
 named!(repeat_brace<&str, (u32, Option<u32>)>, delimited!(
     tag_s!("{"),
     chain!(
-        opt!(multispace) ~
+        opt!(complete!(multispace)) ~
         min: opt!(unsiged_integer) ~
-        opt!(multispace) ~
+        opt!(complete!(multispace)) ~
         tag_s!(",") ~
-        opt!(multispace) ~
+        opt!(complete!(multispace)) ~
         max: opt!(unsiged_integer) ~
-        opt!(multispace), || {
+        opt!(complete!(multispace)), || {
             let min = match min {
                 Some(min) => min,
                 None => 0
@@ -219,9 +219,9 @@ named!(repeat_brace<&str, (u32, Option<u32>)>, delimited!(
 ));
 
 named!(path_expression<&str, ASTPath>, chain!(
-    opt!(multispace) ~
+    opt!(complete!(multispace)) ~
     head: node_expression ~
-    opt!(multispace) ~
+    opt!(complete!(multispace)) ~
     tail: edge_to_node, || {
         ASTPath{head: head, tail: tail}
     }
@@ -241,10 +241,12 @@ pub fn parse_expression(expression: &str) -> Result<ASTPath, ParseError> {
                 Err(ParseError::Problem)
             }
         },
-        IResult::Error(_) => {
+        IResult::Error(e) => {
+            println!("Horrible error: {:?}", e);
             Err(ParseError::Problem)
         },
-        IResult::Incomplete(_) => {
+        IResult::Incomplete(e) => {
+            println!("Incomplete: {:?}", e);
             Err(ParseError::Problem)
         }
     }

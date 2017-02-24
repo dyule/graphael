@@ -13,14 +13,14 @@ use std::io;
 use std::io::Write;
 use std::fs;
 use std::path;
-use std::collections::HashMap;
+use std::borrow::Cow;
 use hyper::server::{Handler, Server, Request, Response};
 use hyper::uri::RequestUri;
 use hyper::status::StatusCode;
 use hyper::header::ContentType;
 use hyper::mime::{Mime, TopLevel, SubLevel, Attr, Value};
 use rustc_serialize::json;
-use url::{Url, UrlParser};
+use url::{Url};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use log::{LogRecord, LogLevel, LogMetadata, SetLoggerError, LogLevelFilter};
 use argparse::{ArgumentParser, Store};
@@ -77,7 +77,7 @@ impl GraphHandler {
         }
     }
 
-    fn handle_query(&self, mut res:Response, params: Option<Vec<(String, String)>>) {
+    fn handle_query<'a, I: Iterator<Item=(Cow<'a, str>, Cow<'a, str>)>>(&self, mut res:Response, params: I) {
         {
             let headers = res.headers_mut();
             headers.set(
@@ -85,45 +85,40 @@ impl GraphHandler {
                                  vec![(Attr::Charset, Value::Utf8)]))
             );
         }
-        match params {
-            Some(params) => {
-                let mut param_map = HashMap::new();
-                for &(ref key, ref value) in params.iter() {
-                    param_map.insert(key, value);
-                }
-                if let Some(query) = param_map.get(&"q".to_string()) {
-                    match self.graph.lock() {
-                        Ok(graph) => {
-                            match  graph.match_paths(*query) {
-                                Ok(result) => {
-                                    let dag = result.to_dag();
 
-                                    let mut res = res.start().unwrap();
+        for (key, value) in params {
+            if &key == "q" {
+                match self.graph.lock() {
+                    Ok(graph) => {
+                        match  graph.match_paths(&*value) {
+                            Ok(result) => {
+                                let dag = result.to_dag();
 
-                                    let encoded = json::encode(&dag).unwrap();
-                                    try_write!(res.write(b"{\"type\":\"success\",\"graph\":"));
-                                    try_write!(res.write(encoded.as_bytes()));
-                                    try_write!(res.write(b"}"));
-                                    try_write!(res.end());
-                                },
-                                Err(_) => {
-                                    self.handle_error(StatusCode::BadRequest, "Unable to parse path expression", true, res);
-                                }
+                                let mut res = res.start().unwrap();
+
+                                let encoded = json::encode(&dag).unwrap();
+                                try_write!(res.write(b"{\"type\":\"success\",\"graph\":"));
+                                try_write!(res.write(encoded.as_bytes()));
+                                try_write!(res.write(b"}"));
+                                try_write!(res.end());
+                            },
+                            Err(_) => {
+                                self.handle_error(StatusCode::BadRequest, "Unable to parse path expression", true, res);
                             }
-                        },
-                        Err(_) => {
-
                         }
-                    }
+                    },
+                    Err(_) => {
 
-                } else {
-                    self.handle_error(StatusCode::BadRequest, "Query parameter not set", true, res);
+                    }
                 }
-            },
-            None => {
-                self.handle_error(StatusCode::BadRequest, "Query parameter not set", true, res);
+                return
             }
         }
+
+        self.handle_error(StatusCode::BadRequest, "Query parameter not set", true, res);
+
+
+
     }
 
     fn handle_error(&self, status: StatusCode, message: &str, as_json:bool, mut res:Response) {
@@ -146,13 +141,13 @@ impl GraphHandler {
 impl Handler for GraphHandler {
     fn handle(&self, req: Request, res: Response) {
         if let RequestUri::AbsolutePath(ref uri) = req.uri {
-            if let Ok(url) = UrlParser::new().base_url(&self.base_url).parse(uri) {
-                let path = url.serialize_path().unwrap();
+            if let Ok(url) =self.base_url.join(uri) {
+                let path = url.path();
                 info!("Accessed: {}", path);
-                if &path == "/query" {
+                if path == "/query" {
                     self.handle_query(res, url.query_pairs())
                 } else {
-                    if &path == "/" {
+                    if path == "/" {
                         self.handle_static("/index.html", res);
                     } else {
                         self.handle_static(&path, res);
