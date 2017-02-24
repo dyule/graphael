@@ -3,8 +3,10 @@ extern crate hyper;
 extern crate rustc_serialize;
 extern crate url;
 extern crate argparse;
+extern crate env_logger;
 #[macro_use]
 extern crate log;
+
 
 
 use graphael::{GraphDB};
@@ -22,10 +24,8 @@ use hyper::mime::{Mime, TopLevel, SubLevel, Attr, Value};
 use rustc_serialize::json;
 use url::{Url};
 use std::net::{Ipv4Addr, SocketAddrV4};
-use log::{LogRecord, LogLevel, LogMetadata, SetLoggerError, LogLevelFilter};
 use argparse::{ArgumentParser, Store};
 
-struct SimpleLogger;
 
 macro_rules! try_write {
     ($wr: expr) => (
@@ -34,27 +34,6 @@ macro_rules! try_write {
             Err(e) => {error!("Sending error: {:?}", e)}
         }
     );
-}
-
-impl log::Log for SimpleLogger {
-    fn enabled(&self, metadata: &LogMetadata) -> bool {
-        metadata.level() <= LogLevel::Info
-    }
-
-    fn log(&self, record: &LogRecord) {
-        if self.enabled(record.metadata()) {
-            println!("{} - {}", record.level(), record.args());
-        }
-    }
-}
-
-impl SimpleLogger {
-    pub fn init() -> Result<(), SetLoggerError> {
-    log::set_logger(|max_log_level| {
-        max_log_level.set(LogLevelFilter::Info);
-        Box::new(SimpleLogger)
-    })
-}
 }
 
 struct GraphHandler {
@@ -159,7 +138,7 @@ impl Handler for GraphHandler {
 }
 
 fn main() {
-    if let Err(_)  = SimpleLogger::init() {
+    if let Err(_)  = env_logger::init() {
         println!("Unable to initialize logging");
     }
     let mut graph_file = String::new();

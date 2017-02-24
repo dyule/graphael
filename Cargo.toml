@@ -9,10 +9,8 @@ nom = "2.1"
 url = "1.0"
 log = "0.3"
 argparse = "0.2"
-
-[dependencies.hyper]
-version = "0.10"
-
+hyper = "0.10"
+env_logger = "0.4"
 
 [lib]
 name = "graphael"
